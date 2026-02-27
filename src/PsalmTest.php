@@ -40,7 +40,7 @@ final readonly class PsalmTest
         $sections = self::parsePhpt($phptFile);
 
         if (!isset($sections[self::FILE])) {
-            throw new \LogicException(sprintf('File %s must have a FILE section.', $phptFile));
+            throw new \LogicException(\sprintf('File %s must have a FILE section.', $phptFile));
         }
 
         return new self(
@@ -68,7 +68,7 @@ final readonly class PsalmTest
             $contents = file_get_contents($sections[self::EXPECT_EXTERNAL][0]);
 
             if ($contents === false) {
-                throw new \RuntimeException(sprintf('Failed to read file %s.', $sections[self::EXPECT_EXTERNAL][0]));
+                throw new \RuntimeException(\sprintf('Failed to read file %s.', $sections[self::EXPECT_EXTERNAL][0]));
             }
 
             return new IsIdentical($contents);
@@ -78,13 +78,13 @@ final readonly class PsalmTest
             $contents = file_get_contents($sections[self::EXPECTF_EXTERNAL][0]);
 
             if ($contents === false) {
-                throw new \RuntimeException(sprintf('Failed to read file %s.', $sections[self::EXPECTF_EXTERNAL][0]));
+                throw new \RuntimeException(\sprintf('Failed to read file %s.', $sections[self::EXPECTF_EXTERNAL][0]));
             }
 
             return new StringMatchesFormatDescription($contents);
         }
 
-        throw new \LogicException(sprintf('File %s must have an EXPECT* section.', $file));
+        throw new \LogicException(\sprintf('File %s must have an EXPECT* section.', $file));
     }
 
     /**
@@ -99,7 +99,7 @@ final readonly class PsalmTest
         $lines = file($phptFile, FILE_IGNORE_NEW_LINES);
 
         if ($lines === false) {
-            throw new \RuntimeException(sprintf('Failed to read file %s.', $phptFile));
+            throw new \RuntimeException(\sprintf('Failed to read file %s.', $phptFile));
         }
 
         foreach ($lines as $line) {
@@ -109,8 +109,8 @@ final readonly class PsalmTest
                 /** @var non-empty-string */
                 $name = $matches[1];
 
-                if (!\defined(sprintf('%s::%s', self::class, $name))) {
-                    throw new \InvalidArgumentException(sprintf('Section %s is not supported.', $name));
+                if (!\defined(\sprintf('%s::%s', self::class, $name))) {
+                    throw new \InvalidArgumentException(\sprintf('Section %s is not supported.', $name));
                 }
 
                 $sections[$name] = ['', $lineNumber + 1];
