@@ -10,12 +10,12 @@ use PHPUnit\Framework\Assert;
 /**
  * @api
  */
-final class PsalmTester
+final readonly class PsalmTester
 {
     private function __construct(
-        private readonly string $psalmPath,
-        private readonly string $defaultArguments,
-        private readonly string $temporaryDirectory,
+        private string $psalmPath,
+        private string $defaultArguments,
+        private string $temporaryDirectory,
     ) {}
 
     public static function create(
