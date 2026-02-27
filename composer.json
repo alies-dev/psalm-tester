@@ -23,11 +23,10 @@
     "require-dev": {
         "ergebnis/composer-normalize": "^2.50",
         "friendsofphp/php-cs-fixer": "^3.94",
-        "icanhazstring/composer-unused": "^0.9.6",
-        "maglnet/composer-require-checker": "^4.21",
         "phpyh/coding-standard": "^3.0",
         "psalm/plugin-phpunit": "^0.19.5",
         "rector/rector": "^2.3",
+        "shipmonk/composer-dependency-analyser": "^1.8",
         "vimeo/psalm": "^6.10 || ^7.0.0-beta16"
     },
     "autoload": {
@@ -43,8 +42,7 @@
         "sort-packages": true
     },
     "scripts": {
-        "check-require": "composer-require-checker check --config-file=composer-require-checker.json",
-        "check-unused": "composer-unused",
+        "dependency-analyser": "composer-dependency-analyser",
         "fixcs": "php-cs-fixer fix --diff --verbose",
         "pre-command-run": "mkdir -p var",
         "psalm": "psalm --show-info=true --no-diff",
