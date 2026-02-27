@@ -13,7 +13,7 @@ use PHPUnit\Framework\Constraint\StringMatchesFormatDescription;
  * @psalm-immutable
  * @psalm-type PhptSections = array<non-empty-string, array{string, positive-int}>
  */
-final class PsalmTest
+final readonly class PsalmTest
 {
     private const FILE = 'FILE';
     private const ARGS = 'ARGS';
@@ -26,10 +26,10 @@ final class PsalmTest
      * @param positive-int $codeFirstLine
      */
     public function __construct(
-        public readonly string $code,
-        public readonly Constraint $constraint,
-        public readonly string $arguments = '',
-        public readonly int $codeFirstLine = 1,
+        public string $code,
+        public Constraint $constraint,
+        public string $arguments = '',
+        public int $codeFirstLine = 1,
     ) {}
 
     /**
@@ -40,7 +40,7 @@ final class PsalmTest
         $sections = self::parsePhpt($phptFile);
 
         if (!isset($sections[self::FILE])) {
-            throw new \LogicException(sprintf('File %s must have a FILE section.', $phptFile));
+            throw new \LogicException(\sprintf('File %s must have a FILE section.', $phptFile));
         }
 
         return new self(
@@ -65,14 +65,26 @@ final class PsalmTest
         }
 
         if (isset($sections[self::EXPECT_EXTERNAL])) {
-            return new IsIdentical(file_get_contents($sections[self::EXPECT_EXTERNAL][0]));
+            $contents = file_get_contents($sections[self::EXPECT_EXTERNAL][0]);
+
+            if ($contents === false) {
+                throw new \RuntimeException(\sprintf('Failed to read file %s.', $sections[self::EXPECT_EXTERNAL][0]));
+            }
+
+            return new IsIdentical($contents);
         }
 
         if (isset($sections[self::EXPECTF_EXTERNAL])) {
-            return new StringMatchesFormatDescription(file_get_contents($sections[self::EXPECTF_EXTERNAL][0]));
+            $contents = file_get_contents($sections[self::EXPECTF_EXTERNAL][0]);
+
+            if ($contents === false) {
+                throw new \RuntimeException(\sprintf('Failed to read file %s.', $sections[self::EXPECTF_EXTERNAL][0]));
+            }
+
+            return new StringMatchesFormatDescription($contents);
         }
 
-        throw new \LogicException(sprintf('File %s must have an EXPECT* section.', $file));
+        throw new \LogicException(\sprintf('File %s must have an EXPECT* section.', $file));
     }
 
     /**
@@ -84,15 +96,21 @@ final class PsalmTest
         $sections = [];
         $lineNumber = 0;
 
-        foreach (file($phptFile, FILE_IGNORE_NEW_LINES) as $line) {
+        $lines = file($phptFile, FILE_IGNORE_NEW_LINES);
+
+        if ($lines === false) {
+            throw new \RuntimeException(\sprintf('Failed to read file %s.', $phptFile));
+        }
+
+        foreach ($lines as $line) {
             ++$lineNumber;
 
             if (preg_match('/^--([_A-Z]+)--/', $line, $matches)) {
                 /** @var non-empty-string */
                 $name = $matches[1];
 
-                if (!\defined(sprintf('%s::%s', self::class, $name))) {
-                    throw new \InvalidArgumentException(sprintf('Section %s is not supported.', $name));
+                if (!\defined(\sprintf('%s::%s', self::class, $name))) {
+                    throw new \InvalidArgumentException(\sprintf('Section %s is not supported.', $name));
                 }
 
                 $sections[$name] = ['', $lineNumber + 1];

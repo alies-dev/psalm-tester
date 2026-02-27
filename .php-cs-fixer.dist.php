@@ -17,4 +17,8 @@ $config = (new Config())
 
 (new PhpCsFixerCodingStandard())->applyTo($config);
 
+$config->setRules([
+    'new_expression_parentheses' => false, // support PHP 8.2
+]);
+
 return $config;

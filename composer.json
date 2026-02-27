@@ -17,18 +17,17 @@
         }
     ],
     "require": {
-        "php": "^8.1",
-        "phpunit/phpunit": "^9 || ^10"
+        "php": "^8.2",
+        "phpunit/phpunit": "^11 || ^12 || ^13"
     },
     "require-dev": {
-        "ergebnis/composer-normalize": "^2.41.1",
-        "friendsofphp/php-cs-fixer": "^3.48.0",
-        "icanhazstring/composer-unused": "^0.8.11",
-        "maglnet/composer-require-checker": "^4.7.1",
-        "phpyh/coding-standard": "^2.6.0",
-        "psalm/plugin-phpunit": "^0.18.4",
-        "rector/rector": "^0.19.2",
-        "vimeo/psalm": "^5.20.0"
+        "ergebnis/composer-normalize": "^2.50",
+        "friendsofphp/php-cs-fixer": "^3.94",
+        "phpyh/coding-standard": "^2.6",
+        "psalm/plugin-phpunit": "^0.19.5",
+        "rector/rector": "^2.3",
+        "shipmonk/composer-dependency-analyser": "^1.8",
+        "vimeo/psalm": "^6.10 || ^7.0.0-beta16"
     },
     "autoload": {
         "psr-4": {
@@ -43,8 +42,7 @@
         "sort-packages": true
     },
     "scripts": {
-        "check-require": "composer-require-checker check --config-file=composer-require-checker.json",
-        "check-unused": "composer-unused",
+        "dependency-analyser": "composer-dependency-analyser",
         "fixcs": "php-cs-fixer fix --diff --verbose",
         "pre-command-run": "mkdir -p var",
         "psalm": "psalm --show-info=true --no-diff",

@@ -10,12 +10,12 @@ use PHPUnit\Framework\Assert;
 /**
  * @api
  */
-final class PsalmTester
+final readonly class PsalmTester
 {
     private function __construct(
-        private readonly string $psalmPath,
-        private readonly string $defaultArguments,
-        private readonly string $temporaryDirectory,
+        private string $psalmPath,
+        private string $defaultArguments,
+        private string $temporaryDirectory,
     ) {}
 
     public static function create(
@@ -50,7 +50,7 @@ final class PsalmTester
         $temporaryDirectory ??= sys_get_temp_dir() . '/psalm_test';
 
         if (!is_dir($temporaryDirectory) && !mkdir($temporaryDirectory, recursive: true)) {
-            throw new \RuntimeException(sprintf('Failed to create temporary directory %s.', $temporaryDirectory));
+            throw new \RuntimeException(\sprintf('Failed to create temporary directory %s.', $temporaryDirectory));
         }
 
         return $temporaryDirectory;
@@ -61,7 +61,7 @@ final class PsalmTester
         $codeFile = $this->createTemporaryCodeFile($test->code);
 
         try {
-            $command = sprintf(
+            $command = \sprintf(
                 '%s --output-format=json %s %s',
                 $this->psalmPath,
                 $test->arguments ?: $this->defaultArguments,
@@ -72,7 +72,7 @@ final class PsalmTester
             $output = shell_exec($command);
 
             if (!\is_string($output)) {
-                throw new \RuntimeException(sprintf('Failed to run command %s.', $command));
+                throw new \RuntimeException(\sprintf('Failed to run command %s.', $command));
             }
 
             $formattedOutput = $this->formatOutput($output, $test->codeFirstLine);
@@ -88,7 +88,7 @@ final class PsalmTester
         $file = tempnam($this->temporaryDirectory, 'code_');
 
         if ($file === false) {
-            throw new \LogicException(sprintf('Failed to create temporary code file in %s.', $this->temporaryDirectory));
+            throw new \LogicException(\sprintf('Failed to create temporary code file in %s.', $this->temporaryDirectory));
         }
 
         file_put_contents($file, $contents);
@@ -102,7 +102,7 @@ final class PsalmTester
         $decoded = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
 
         return implode("\n", array_map(
-            static fn(array $error): string => sprintf(
+            static fn(array $error): string => \sprintf(
                 '%s on line %d: %s',
                 $error['type'],
                 $error['line_from'] + $codeFirstLine - 1,
