@@ -107,25 +107,80 @@ In your test suite, call `PsalmTest::getSkipReason()` before loading the test an
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 use PHPyh\PsalmTester\PsalmTester;
-use PHPyh\PsalmTester\PsalmTest;
+use PHPyh\PsalmTester\PsalmTest as PsalmTestFixture;
 
-final class PsalmTest extends TestCase
+final class MyPsalmTest extends TestCase
 {
     private ?PsalmTester $psalmTester = null;
 
     #[TestWith([__DIR__ . '/array_values.phpt'])]
     public function testPhptFiles(string $phptFile): void
     {
-        $skipReason = PsalmTest::getSkipReason($phptFile);
+        $skipReason = PsalmTestFixture::getSkipReason($phptFile);
 
         if ($skipReason !== null) {
             $this->markTestSkipped($skipReason);
         }
 
         $this->psalmTester ??= PsalmTester::create();
-        $this->psalmTester->test(PsalmTest::fromPhptFile($phptFile));
+        $this->psalmTester->test(PsalmTestFixture::fromPhptFile($phptFile));
     }
 }
 ```
 
 The SKIPIF script runs in a separate PHP process, so `exit()`/`die()` calls in the script do not affect the test run. `getSkipReason()` returns the reason string with the leading `skip` token stripped (e.g. `"requires PHP 8.2+"`) or `null` if the test should run.
+
+## Batch execution
+
+By default, `test()` spawns a separate Psalm process per `.phpt` file.
+For plugins with expensive boot costs (e.g., Laravel plugin boots a full application), this means each test pays the full startup overhead.
+
+`runBatch()` groups tests by their argument string and runs **one Psalm invocation per group**,
+then distributes results back to individual tests using the `file_path` field in Psalm's JSON output.
+
+```php
+use PHPUnit\Framework\Assert;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use PHPyh\PsalmTester\PsalmTester;
+use PHPyh\PsalmTester\PsalmTest;
+
+final class MyPsalmTest extends TestCase
+{
+    /** @var array<string, string> */
+    private static array $batchResults = [];
+
+    /** @var array<string, PsalmTest> */
+    private static array $testData = [];
+
+    public static function setUpBeforeClass(): void
+    {
+        $tester = PsalmTester::create(
+            defaultArguments: '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
+        );
+
+        foreach (self::discoverPhptFiles() as $name => $path) {
+            self::$testData[$name] = PsalmTest::fromPhptFile($path);
+        }
+
+        self::$batchResults = $tester->runBatch(self::$testData);
+    }
+
+    #[DataProvider('providePhptFiles')]
+    public function testPhptFiles(string $name): void
+    {
+        Assert::assertThat(
+            self::$batchResults[$name],
+            self::$testData[$name]->constraint,
+        );
+    }
+
+    // ... data provider and discovery methods
+}
+```
+
+> **Important:** Since all files in a batch group are analyzed in a single Psalm run, they share a global symbol table.
+> Ensure that class and function names are unique across `.phpt` files within the same argument group,
+> otherwise Psalm will report `DuplicateClass` / `DuplicateFunction` errors.
+
+See the source code in `PsalmTester::runBatch()` and related helper methods such as `runGroup()` for implementation details.
