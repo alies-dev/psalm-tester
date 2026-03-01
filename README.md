@@ -86,3 +86,58 @@ or for each test individually using `--ARGS--` section:
 --EXPECT--
 ...
 ```
+
+## Batch execution
+
+By default, `test()` spawns a separate Psalm process per `.phpt` file.
+For plugins with expensive boot costs (e.g., Laravel plugin boots a full application), this means each test pays the full startup overhead.
+
+`runBatch()` groups tests by their argument string and runs **one Psalm invocation per group**,
+then distributes results back to individual tests using the `file_path` field in Psalm's JSON output.
+
+```php
+use PHPUnit\Framework\Assert;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use PHPyh\PsalmTester\PsalmTester;
+use PHPyh\PsalmTester\PsalmTest;
+
+final class MyPsalmTest extends TestCase
+{
+    /** @var array<string, string> */
+    private static array $batchResults = [];
+
+    /** @var array<string, PsalmTest> */
+    private static array $testData = [];
+
+    public static function setUpBeforeClass(): void
+    {
+        $tester = PsalmTester::create(
+            defaultArguments: '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
+        );
+
+        foreach (self::discoverPhptFiles() as $name => $path) {
+            self::$testData[$name] = PsalmTest::fromPhptFile($path);
+        }
+
+        self::$batchResults = $tester->runBatch(self::$testData);
+    }
+
+    #[DataProvider('providePhptFiles')]
+    public function testPhptFiles(string $name): void
+    {
+        Assert::assertThat(
+            self::$batchResults[$name],
+            self::$testData[$name]->constraint,
+        );
+    }
+
+    // ... data provider and discovery methods
+}
+```
+
+> **Important:** Since all files in a batch group are analyzed in a single Psalm run, they share a global symbol table.
+> Ensure that class and function names are unique across `.phpt` files within the same argument group,
+> otherwise Psalm will report `DuplicateClass` / `DuplicateFunction` errors.
+
+For design details, see [src/parallel.md](src/parallel.md).
