@@ -62,8 +62,8 @@ final readonly class PsalmTest
      *   --SKIPIF--
      *   <?php if (PHP_VERSION_ID < 80200) { echo 'skip requires PHP 8.2+'; }
      *
-     * Returns null when no SKIPIF section is present or when the section's output
-     * does not start with "skip".
+     * Returns the reason string with the leading "skip" token stripped (e.g. "requires PHP 8.2+"),
+     * or null when no SKIPIF section is present or the output does not start with "skip".
      */
     public static function getSkipReason(string $phptFile): ?string
     {
@@ -89,13 +89,13 @@ final readonly class PsalmTest
 
         try {
             /** @psalm-suppress ForbiddenCode */
-            $output = \trim((string) \shell_exec(\PHP_BINARY . ' ' . \escapeshellarg($tempFile)));
+            $output = \trim((string) \shell_exec(\escapeshellarg(\PHP_BINARY) . ' ' . \escapeshellarg($tempFile)));
         } finally {
             \unlink($tempFile);
         }
 
         if (\stripos($output, 'skip') === 0) {
-            return $output;
+            return \ltrim(\substr($output, 4));
         }
 
         return null;
