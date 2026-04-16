@@ -115,12 +115,15 @@ final readonly class PsalmTester
             /** @var array<string, list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>> $errorsByFile */
             $errorsByFile = [];
             foreach ($decoded as $error) {
-                $errorsByFile[$error['file_path']][] = $error;
+                $key = \realpath($error['file_path']) ?: $error['file_path'];
+                $errorsByFile[$key][] = $error;
             }
 
             return array_map(function ($entry) use ($errorsByFile) {
+                $key = \realpath($entry['file']) ?: $entry['file'];
+
                 return $this->formatErrors(
-                    $errorsByFile[$entry['file']] ?? [],
+                    $errorsByFile[$key] ?? [],
                     $entry['test']->codeFirstLine,
                 );
             }, $entries);
@@ -216,7 +219,9 @@ final readonly class PsalmTester
             throw new \LogicException(\sprintf('Failed to create temporary code file in %s.', $this->temporaryDirectory));
         }
 
-        file_put_contents($file, $contents);
+        if (file_put_contents($file, $contents) === false) {
+            throw new \RuntimeException(\sprintf('Failed to write temporary code file: %s.', $file));
+        }
 
         return $file;
     }
