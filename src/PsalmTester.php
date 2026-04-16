@@ -60,8 +60,8 @@ final readonly class PsalmTester
      * Run multiple tests in batched Psalm invocations (one per unique argument set).
      * Returns formatted output per test — callers are responsible for assertions.
      * @api
-     * @param array<string, PsalmTest> $tests keyed by identifier
-     * @return array<string, string> formatted output keyed by identifier
+     * @param array<array-key, PsalmTest> $tests keyed by identifier
+     * @return array<array-key, string> formatted output keyed by identifier
      */
     public function runBatch(array $tests): array
     {
@@ -200,7 +200,10 @@ final readonly class PsalmTester
     private function formatErrors(array $errors, int $codeFirstLine): string
     {
         /** @psalm-suppress PossiblyUndefinedStringArrayOffset */
-        usort($errors, static fn(array $a, array $b): int => $a['line_from'] <=> $b['line_from']);
+        usort($errors, static fn(array $a, array $b): int => ($a['line_from'] <=> $b['line_from'])
+            ?: ($a['column_from'] <=> $b['column_from'])
+            ?: ($a['type'] <=> $b['type'])
+            ?: ($a['message'] <=> $b['message']));
 
         return implode("\n", array_map(
             static fn(array $error): string => \sprintf(

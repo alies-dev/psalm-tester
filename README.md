@@ -156,7 +156,7 @@ final class MyPsalmTest extends TestCase
     public static function setUpBeforeClass(): void
     {
         $tester = PsalmTester::create(
-            defaultArguments: '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
+            defaultArguments: '--no-progress --no-diff --config=' . dirname(__DIR__) . '/psalm.xml',
         );
 
         foreach (self::discoverPhptFiles() as $name => $path) {
