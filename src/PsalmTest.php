@@ -15,6 +15,7 @@ use PHPUnit\Framework\Constraint\StringMatchesFormatDescription;
  */
 final readonly class PsalmTest
 {
+    private const SKIPIF = 'SKIPIF';
     private const FILE = 'FILE';
     private const ARGS = 'ARGS';
     private const EXPECT = 'EXPECT';
@@ -49,6 +50,56 @@ final readonly class PsalmTest
             arguments: $sections[self::ARGS][0] ?? '',
             codeFirstLine: $sections[self::FILE][1],
         );
+    }
+
+    /**
+     * Evaluate the --SKIPIF-- section of a .phpt file and return the skip reason,
+     * or null if the test should not be skipped.
+     *
+     * The SKIPIF section contains a PHP script (starting with <?php) that echoes
+     * a message beginning with "skip" when the test should be skipped, e.g.:
+     *
+     *   --SKIPIF--
+     *   <?php if (PHP_VERSION_ID < 80200) { echo 'skip requires PHP 8.2+'; }
+     *
+     * Returns null when no SKIPIF section is present or when the section's output
+     * does not start with "skip".
+     */
+    public static function getSkipReason(string $phptFile): ?string
+    {
+        $sections = self::parsePhpt($phptFile);
+
+        if (!isset($sections[self::SKIPIF])) {
+            return null;
+        }
+
+        // Write the SKIPIF code to a temp file so that require handles <?php correctly.
+        $tempFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
+
+        if ($tempFile === false) {
+            return null;
+        }
+
+        \file_put_contents($tempFile, $sections[self::SKIPIF][0]);
+
+        \ob_start();
+
+        try {
+            // Isolate the require to avoid polluting the current scope.
+            (static function (string $file): void {
+                require $file;
+            })($tempFile);
+        } finally {
+            \unlink($tempFile);
+        }
+
+        $output = \trim(\ob_get_clean() ?: '');
+
+        if (\stripos($output, 'skip') === 0) {
+            return $output;
+        }
+
+        return null;
     }
 
     /**
