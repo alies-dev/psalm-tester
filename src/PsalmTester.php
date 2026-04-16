@@ -145,7 +145,7 @@ final readonly class PsalmTester
         $codeFile = $this->createTemporaryCodeFile($test->code);
 
         try {
-            $args = $test->arguments ?: $this->defaultArguments;
+            $args = (string) \preg_replace('/\s+/', ' ', \trim($test->arguments ?: $this->defaultArguments));
             $output = $this->runPsalm($args, $codeFile);
             $decoded = $this->decodeOutput($output, $args);
             $formattedOutput = $this->formatErrors($decoded, $test->codeFirstLine);

@@ -39,7 +39,7 @@ Trace on line %d: $_list: non-empty-list<%s>
 
 ### 2. Add a test suite
 
-`tests/PsalmTest.php`
+`tests/MyPsalmTest.php`
 
 ```php
 <?php
