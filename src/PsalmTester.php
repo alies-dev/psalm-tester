@@ -67,22 +67,34 @@ final readonly class PsalmTester
     {
         /** @var array<string, array<string, array{file: string, test: PsalmTest}>> */
         $groups = [];
+        /** @var list<string> */
+        $allTempFiles = [];
 
-        foreach ($tests as $id => $test) {
-            $args = $test->arguments ?: $this->defaultArguments;
-            $groups[$args][$id] = [
-                'file' => $this->createTemporaryCodeFile($test->code),
-                'test' => $test,
-            ];
+        try {
+            foreach ($tests as $id => $test) {
+                $args = $test->arguments ?: $this->defaultArguments;
+                $file = $this->createTemporaryCodeFile($test->code);
+                $allTempFiles[] = $file;
+                $groups[$args][$id] = [
+                    'file' => $file,
+                    'test' => $test,
+                ];
+            }
+
+            $results = [];
+
+            foreach ($groups as $args => $entries) {
+                $results = array_merge($results, $this->runGroup($args, $entries));
+            }
+
+            return $results;
+        } finally {
+            foreach ($allTempFiles as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                }
+            }
         }
-
-        $results = [];
-
-        foreach ($groups as $args => $entries) {
-            $results += $this->runGroup($args, $entries);
-        }
-
-        return $results;
     }
 
     /**
