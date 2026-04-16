@@ -78,13 +78,13 @@ final readonly class PsalmTest
         $tempFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
 
         if ($tempFile === false) {
-            return null;
+            throw new \RuntimeException(\sprintf('Failed to create temporary file for SKIPIF evaluation of %s.', $phptFile));
         }
 
         if (\file_put_contents($tempFile, $sections[self::SKIPIF][0]) === false) {
             \unlink($tempFile);
 
-            return null;
+            throw new \RuntimeException(\sprintf('Failed to write temporary SKIPIF file for %s.', $phptFile));
         }
 
         try {
