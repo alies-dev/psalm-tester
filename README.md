@@ -1,16 +1,16 @@
-# PHPyh Psalm Tester
+# Psalm Tester
 
 Test Psalm via phpt files!
 
-[![Latest Stable Version](https://poser.pugx.org/phpyh/psalm-tester/v/stable.png)](https://packagist.org/packages/phpyh/psalm-tester)
-[![Total Downloads](https://poser.pugx.org/phpyh/psalm-tester/downloads.png)](https://packagist.org/packages/phpyh/psalm-tester)
-[![psalm-level](https://shepherd.dev/github/phpyh/psalm-tester/level.svg)](https://shepherd.dev/github/phpyh/psalm-tester)
-[![type-coverage](https://shepherd.dev/github/phpyh/psalm-tester/coverage.svg)](https://shepherd.dev/github/phpyh/psalm-tester)
+[![Latest Stable Version](https://poser.pugx.org/alies-dev/psalm-tester/v/stable.png)](https://packagist.org/packages/alies-dev/psalm-tester)
+[![Total Downloads](https://poser.pugx.org/alies-dev/psalm-tester/downloads.png)](https://packagist.org/packages/alies-dev/psalm-tester)
+[![psalm-level](https://shepherd.dev/github/alies-dev/psalm-tester/level.svg)](https://shepherd.dev/github/alies-dev/psalm-tester)
+[![type-coverage](https://shepherd.dev/github/alies-dev/psalm-tester/coverage.svg)](https://shepherd.dev/github/alies-dev/psalm-tester)
 
 ## Installation
 
 ```shell
-composer require --dev phpyh/psalm-tester
+composer require --dev alies-dev/psalm-tester
 ```
 
 ## Basic usage
@@ -44,10 +44,10 @@ Trace on line %d: $_list: non-empty-list<%s>
 ```php
 <?php
 
+use AliesDev\PsalmTester\PsalmTester;
+use AliesDev\PsalmTester\PsalmTest as PsalmTestFixture;
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
-use PHPyh\PsalmTester\PsalmTester;
-use PHPyh\PsalmTester\PsalmTest as PsalmTestFixture;
 
 final class MyPsalmTest extends TestCase
 {
@@ -69,7 +69,7 @@ By default `PsalmTester` runs Psalm with `--no-progress --no-diff --config=`[psa
 You can change this at the `PsalmTester` level:
 
 ```php
-use PHPyh\PsalmTester\PsalmTester;
+use AliesDev\PsalmTester\PsalmTester;
 
 PsalmTester::create(
     defaultArguments: '--no-progress --no-cache --config=my_default_config.xml',
@@ -106,8 +106,8 @@ In your test suite, call `PsalmTest::getSkipReason()` before loading the test an
 ```php
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
-use PHPyh\PsalmTester\PsalmTester;
-use PHPyh\PsalmTester\PsalmTest as PsalmTestFixture;
+use AliesDev\PsalmTester\PsalmTester;
+use AliesDev\PsalmTester\PsalmTest as PsalmTestFixture;
 
 final class MyPsalmTest extends TestCase
 {
@@ -142,8 +142,8 @@ then distributes results back to individual tests using the `file_path` field in
 use PHPUnit\Framework\Assert;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use PHPyh\PsalmTester\PsalmTester;
-use PHPyh\PsalmTester\PsalmTest;
+use AliesDev\PsalmTester\PsalmTester;
+use AliesDev\PsalmTester\PsalmTest;
 
 final class MyPsalmTest extends TestCase
 {

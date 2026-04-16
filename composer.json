@@ -1,5 +1,5 @@
 {
-    "name": "phpyh/psalm-tester",
+    "name": "alies-dev/psalm-tester",
     "description": "Test Psalm via phpt files!",
     "license": "MIT",
     "type": "library",
@@ -14,6 +14,9 @@
         {
             "name": "Valentin Udaltsov",
             "email": "udaltsov.valentin@gmail.com"
+        },
+        {
+            "name": "Alies Lapatsin"
         }
     ],
     "require": {
@@ -24,14 +27,14 @@
         "ergebnis/composer-normalize": "^2.50",
         "friendsofphp/php-cs-fixer": "^3.94",
         "phpyh/coding-standard": "^2.6",
-        "psalm/plugin-phpunit": "^0.19.5",
+        "psalm/plugin-phpunit": "^0.19.5 || ^0.20.0",
         "rector/rector": "^2.3",
         "shipmonk/composer-dependency-analyser": "^1.8",
         "vimeo/psalm": "^6.10 || ^7.0.0-beta16"
     },
     "autoload": {
         "psr-4": {
-            "PHPyh\\PsalmTester\\": "src/"
+            "AliesDev\\PsalmTester\\": "src/"
         }
     },
     "config": {

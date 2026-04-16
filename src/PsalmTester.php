@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace PHPyh\PsalmTester;
+namespace AliesDev\PsalmTester;
 
 use Composer\InstalledVersions;
 use PHPUnit\Framework\Assert;

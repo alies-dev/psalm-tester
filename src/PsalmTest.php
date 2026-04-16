@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace PHPyh\PsalmTester;
+namespace AliesDev\PsalmTester;
 
 use PHPUnit\Framework\Constraint\Constraint;
 use PHPUnit\Framework\Constraint\IsIdentical;
