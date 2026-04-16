@@ -16,17 +16,20 @@ final readonly class PsalmTester
         private string $psalmPath,
         private string $defaultArguments,
         private string $temporaryDirectory,
+        private bool $showProgress,
     ) {}
 
     public static function create(
         ?string $psalmPath = null,
         string $defaultArguments = '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
         ?string $temporaryDirectory = null,
+        bool $showProgress = true,
     ): self {
         return new self(
             psalmPath: $psalmPath ?? self::findPsalm(),
             defaultArguments: $defaultArguments,
             temporaryDirectory: self::resolveTemporaryDirectory($temporaryDirectory),
+            showProgress: $showProgress,
         );
     }
 
@@ -84,9 +87,12 @@ final readonly class PsalmTester
             $results = [];
 
             foreach ($groups as $args => $entries) {
+                $groupCount = 0;
                 foreach ($this->runGroup($args, $entries) as $id => $output) {
                     $results[$id] = $output;
+                    $groupCount++;
                 }
+                $this->writeProgress($args, $groupCount);
             }
 
             return $results;
@@ -150,6 +156,7 @@ final readonly class PsalmTester
             $decoded = $this->decodeOutput($output, $args);
             $formattedOutput = $this->formatErrors($decoded, $test->codeFirstLine);
 
+            $this->writeProgress($args, 1);
             Assert::assertThat($formattedOutput, $test->constraint);
         } finally {
             @unlink($codeFile);
@@ -222,6 +229,14 @@ final readonly class PsalmTester
             ),
             $errors,
         ));
+    }
+
+    private function writeProgress(string $args, int $count): void
+    {
+        if ($this->showProgress) {
+            $displayArgs = \preg_replace('/\s+/', ' ', \trim($args)) ?? $args;
+            fwrite(\STDERR, \sprintf("%s: %d %s\n", $displayArgs, $count, $count === 1 ? 'test' : 'tests'));
+        }
     }
 
     private function createTemporaryCodeFile(string $contents): string
