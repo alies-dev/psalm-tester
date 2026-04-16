@@ -73,27 +73,26 @@ final readonly class PsalmTest
             return null;
         }
 
-        // Write the SKIPIF code to a temp file so that require handles <?php correctly.
+        // Execute the SKIPIF script in a separate PHP process so that die()/exit() calls
+        // in the script do not terminate the current test run.
         $tempFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
 
         if ($tempFile === false) {
             return null;
         }
 
-        \file_put_contents($tempFile, $sections[self::SKIPIF][0]);
+        if (\file_put_contents($tempFile, $sections[self::SKIPIF][0]) === false) {
+            \unlink($tempFile);
 
-        \ob_start();
+            return null;
+        }
 
         try {
-            // Isolate the require to avoid polluting the current scope.
-            (static function (string $file): void {
-                require $file;
-            })($tempFile);
+            /** @psalm-suppress ForbiddenCode */
+            $output = \trim((string) \shell_exec(\PHP_BINARY . ' ' . \escapeshellarg($tempFile)));
         } finally {
             \unlink($tempFile);
         }
-
-        $output = \trim(\ob_get_clean() ?: '');
 
         if (\stripos($output, 'skip') === 0) {
             return $output;
