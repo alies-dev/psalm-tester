@@ -61,6 +61,7 @@ final readonly class PsalmTester
 
     /**
      * Run multiple tests in batched Psalm invocations (one per unique argument set).
+     * Groups are launched concurrently via proc_open; wall time is bounded by the slowest group.
      * Returns formatted output per test — callers are responsible for assertions.
      * @api
      * @param array<array-key, PsalmTest> $tests keyed by identifier
@@ -84,19 +85,36 @@ final readonly class PsalmTester
                 ];
             }
 
+            // Pre-seed results keyed by input id so the returned dict preserves $tests input order.
+            /** @var array<array-key, string> */
             $results = [];
-
-            foreach ($groups as $args => $entries) {
-                $this->writeProgressStart($args);
-                $groupCount = 0;
-                foreach ($this->runGroup($args, $entries) as $id => $output) {
-                    $results[$id] = $output;
-                    $groupCount++;
-                }
-                $this->writeProgressEnd($groupCount);
+            foreach ($tests as $id => $_) {
+                $results[$id] = '';
             }
 
-            return $results;
+            /** @var array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> */
+            $running = [];
+
+            try {
+                foreach ($groups as $args => $entries) {
+                    $running[] = $this->startGroup($args, $entries);
+                }
+
+                $this->drainAndFinalize($running, $results);
+
+                return $results;
+            } finally {
+                // Ensure any leftover processes (unreached in the success path) are cleaned up on exception.
+                foreach ($running as $proc) {
+                    if ($proc['stdout'] !== null) {
+                        @\fclose($proc['stdout']);
+                    }
+                    if ($proc['stderr'] !== null) {
+                        @\fclose($proc['stderr']);
+                    }
+                    @\proc_close($proc['process']);
+                }
+            }
         } finally {
             foreach ($allTempFiles as $file) {
                 if (is_file($file)) {
@@ -108,43 +126,147 @@ final readonly class PsalmTester
 
     /**
      * @param array<array-key, array{file: string, test: PsalmTest}> $entries
-     * @return array<array-key, string>
+     * @return array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: resource, stderr: resource, stdoutBuffer: string}
      */
-    private function runGroup(string $args, array $entries): array
+    private function startGroup(string $args, array $entries): array
     {
-        try {
-            $filePaths = array_map(
-                static fn(array $entry): string => $entry['file'],
-                $entries,
-            );
+        $filePaths = array_map(
+            static fn(array $entry): string => $entry['file'],
+            $entries,
+        );
 
-            $output = $this->runPsalm($args, ...array_values($filePaths));
-            $decoded = $this->decodeOutput($output, $args);
+        $command = \sprintf(
+            '%s --output-format=json %s %s',
+            \escapeshellarg($this->psalmPath),
+            $args,
+            \implode(' ', array_map(\escapeshellarg(...), array_values($filePaths))),
+        );
 
-            /** @var array<string, list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>> $errorsByFile */
-            $errorsByFile = [];
-            foreach ($decoded as $error) {
-                $resolved = \realpath($error['file_path']);
-                $key = $resolved !== false ? $resolved : $error['file_path'];
-                $errorsByFile[$key][] = $error;
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        $pipes = [];
+        $process = \proc_open($command, $descriptors, $pipes);
+
+        if (!\is_resource($process)) {
+            throw new \RuntimeException(\sprintf('Failed to run command %s.', $command));
+        }
+
+        \fclose($pipes[0]);
+        \stream_set_blocking($pipes[1], false);
+        \stream_set_blocking($pipes[2], false);
+
+        return [
+            'args' => $args,
+            'entries' => $entries,
+            'command' => $command,
+            'process' => $process,
+            'stdout' => $pipes[1],
+            'stderr' => $pipes[2],
+            'stdoutBuffer' => '',
+        ];
+    }
+
+    /**
+     * @param array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> $running
+     * @param array<array-key, string> $results
+     * @param-out array<array-key, string> $results
+     */
+    private function drainAndFinalize(array &$running, array &$results): void
+    {
+        // Progress lines are printed in completion order (non-deterministic across parallel groups).
+        while ($running !== []) {
+            $readable = [];
+            foreach ($running as $proc) {
+                if ($proc['stdout'] !== null) {
+                    $readable[] = $proc['stdout'];
+                }
+                if ($proc['stderr'] !== null) {
+                    $readable[] = $proc['stderr'];
+                }
             }
 
-            $results = [];
-            foreach ($entries as $id => $entry) {
-                $resolved = \realpath($entry['file']);
-                $key = $resolved !== false ? $resolved : $entry['file'];
-                $results[$id] = $this->formatErrors(
-                    $errorsByFile[$key] ?? [],
-                    $entry['test']->codeFirstLine,
-                );
+            if ($readable === []) {
+                break;
             }
 
-            return $results;
-        } finally {
-            foreach ($entries as $entry) {
-                @unlink($entry['file']);
+            $write = null;
+            $except = null;
+            $ready = @\stream_select($readable, $write, $except, 1);
+
+            if ($ready === false) {
+                continue;
+            }
+
+            foreach (array_keys($running) as $key) {
+                $stdout = $running[$key]['stdout'];
+                if ($stdout !== null && \in_array($stdout, $readable, true)) {
+                    $chunk = \fread($stdout, 65536);
+                    if ($chunk === false || ($chunk === '' && \feof($stdout))) {
+                        \fclose($stdout);
+                        $running[$key]['stdout'] = null;
+                    } elseif ($chunk !== '') {
+                        $running[$key]['stdoutBuffer'] .= $chunk;
+                    }
+                }
+
+                $stderr = $running[$key]['stderr'];
+                if ($stderr !== null && \in_array($stderr, $readable, true)) {
+                    $chunk = \fread($stderr, 65536);
+                    if ($chunk === false || ($chunk === '' && \feof($stderr))) {
+                        \fclose($stderr);
+                        $running[$key]['stderr'] = null;
+                    } elseif ($chunk !== '') {
+                        // Mirror shell_exec behavior: stderr falls through to the parent terminal.
+                        \fwrite(\STDERR, $chunk);
+                    }
+                }
+
+                if ($running[$key]['stdout'] === null && $running[$key]['stderr'] === null) {
+                    \proc_close($running[$key]['process']);
+                    $finalized = $running[$key];
+                    unset($running[$key]);
+                    $this->collectGroupResults($finalized, $results);
+                }
             }
         }
+    }
+
+    /**
+     * @param array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string} $proc
+     * @param array<array-key, string> $results
+     * @param-out array<array-key, string> $results
+     */
+    private function collectGroupResults(array $proc, array &$results): void
+    {
+        $args = $proc['args'];
+        $entries = $proc['entries'];
+        $output = $proc['stdoutBuffer'];
+
+        $decoded = $this->decodeOutput($output, $args);
+
+        /** @var array<string, list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>> */
+        $errorsByFile = [];
+        foreach ($decoded as $error) {
+            $resolved = \realpath($error['file_path']);
+            $key = $resolved !== false ? $resolved : $error['file_path'];
+            $errorsByFile[$key][] = $error;
+        }
+
+        $this->writeProgressStart($args);
+        $groupCount = 0;
+        foreach ($entries as $id => $entry) {
+            $resolved = \realpath($entry['file']);
+            $key = $resolved !== false ? $resolved : $entry['file'];
+            $results[$id] = $this->formatErrors(
+                $errorsByFile[$key] ?? [],
+                $entry['test']->codeFirstLine,
+            );
+            $groupCount++;
+        }
+        $this->writeProgressEnd($groupCount);
     }
 
     public function test(PsalmTest $test): void
