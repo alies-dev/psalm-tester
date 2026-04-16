@@ -65,7 +65,7 @@ final readonly class PsalmTester
      */
     public function runBatch(array $tests): array
     {
-        /** @var array<string, array<string, array{file: string, test: PsalmTest}>> */
+        /** @var array<string, array<array-key, array{file: string, test: PsalmTest}>> */
         $groups = [];
         /** @var list<string> */
         $allTempFiles = [];
@@ -100,8 +100,8 @@ final readonly class PsalmTester
     }
 
     /**
-     * @param array<string, array{file: string, test: PsalmTest}> $entries
-     * @return array<string, string>
+     * @param array<array-key, array{file: string, test: PsalmTest}> $entries
+     * @return array<array-key, string>
      */
     private function runGroup(string $args, array $entries): array
     {
