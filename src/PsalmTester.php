@@ -87,12 +87,13 @@ final readonly class PsalmTester
             $results = [];
 
             foreach ($groups as $args => $entries) {
+                $this->writeProgressStart($args);
                 $groupCount = 0;
                 foreach ($this->runGroup($args, $entries) as $id => $output) {
                     $results[$id] = $output;
                     $groupCount++;
                 }
-                $this->writeProgress($args, $groupCount);
+                $this->writeProgressEnd($groupCount);
             }
 
             return $results;
@@ -152,11 +153,12 @@ final readonly class PsalmTester
 
         try {
             $args = (string) \preg_replace('/\s+/', ' ', \trim($test->arguments ?: $this->defaultArguments));
+            $this->writeProgressStart($args);
             $output = $this->runPsalm($args, $codeFile);
             $decoded = $this->decodeOutput($output, $args);
             $formattedOutput = $this->formatErrors($decoded, $test->codeFirstLine);
 
-            $this->writeProgress($args, 1);
+            $this->writeProgressEnd(1);
             Assert::assertThat($formattedOutput, $test->constraint);
         } finally {
             @unlink($codeFile);
@@ -231,11 +233,18 @@ final readonly class PsalmTester
         ));
     }
 
-    private function writeProgress(string $args, int $count): void
+    private function writeProgressStart(string $args): void
     {
         if ($this->showProgress) {
             $displayArgs = \preg_replace('/\s+/', ' ', \trim($args)) ?? $args;
-            fwrite(\STDERR, \sprintf("%s: %d %s\n", $displayArgs, $count, $count === 1 ? 'test' : 'tests'));
+            fwrite(\STDERR, $displayArgs);
+        }
+    }
+
+    private function writeProgressEnd(int $count): void
+    {
+        if ($this->showProgress) {
+            fwrite(\STDERR, \sprintf(": %d %s\n", $count, $count === 1 ? 'test' : 'tests'));
         }
     }
 
