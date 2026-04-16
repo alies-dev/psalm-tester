@@ -86,3 +86,46 @@ or for each test individually using `--ARGS--` section:
 --EXPECT--
 ...
 ```
+
+## Skipping tests conditionally
+
+Add a `--SKIPIF--` section containing a PHP script that echoes a message starting with `skip` when the test should not run:
+
+```phpt
+--SKIPIF--
+<?php if (PHP_VERSION_ID < 80200) { echo 'skip requires PHP 8.2+'; }
+--FILE--
+<?php
+...
+--EXPECT--
+...
+```
+
+In your test suite, call `PsalmTest::getSkipReason()` before loading the test and pass the result to PHPUnit's `markTestSkipped()`:
+
+```php
+use PHPUnit\Framework\Attributes\TestWith;
+use PHPUnit\Framework\TestCase;
+use PHPyh\PsalmTester\PsalmTester;
+use PHPyh\PsalmTester\PsalmTest;
+
+final class PsalmTest extends TestCase
+{
+    private ?PsalmTester $psalmTester = null;
+
+    #[TestWith([__DIR__ . '/array_values.phpt'])]
+    public function testPhptFiles(string $phptFile): void
+    {
+        $skipReason = PsalmTest::getSkipReason($phptFile);
+
+        if ($skipReason !== null) {
+            $this->markTestSkipped($skipReason);
+        }
+
+        $this->psalmTester ??= PsalmTester::create();
+        $this->psalmTester->test(PsalmTest::fromPhptFile($phptFile));
+    }
+}
+```
+
+The SKIPIF script runs in a separate PHP process, so `exit()`/`die()` calls in the script do not affect the test run. `getSkipReason()` returns the reason string with the leading `skip` token stripped (e.g. `"requires PHP 8.2+"`) or `null` if the test should run.

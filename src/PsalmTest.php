@@ -15,6 +15,7 @@ use PHPUnit\Framework\Constraint\StringMatchesFormatDescription;
  */
 final readonly class PsalmTest
 {
+    private const SKIPIF = 'SKIPIF';
     private const FILE = 'FILE';
     private const ARGS = 'ARGS';
     private const EXPECT = 'EXPECT';
@@ -49,6 +50,55 @@ final readonly class PsalmTest
             arguments: $sections[self::ARGS][0] ?? '',
             codeFirstLine: $sections[self::FILE][1],
         );
+    }
+
+    /**
+     * Evaluate the --SKIPIF-- section of a .phpt file and return the skip reason,
+     * or null if the test should not be skipped.
+     *
+     * The SKIPIF section contains a PHP script (starting with <?php) that echoes
+     * a message beginning with "skip" when the test should be skipped, e.g.:
+     *
+     *   --SKIPIF--
+     *   <?php if (PHP_VERSION_ID < 80200) { echo 'skip requires PHP 8.2+'; }
+     *
+     * Returns the reason string with the leading "skip" token stripped (e.g. "requires PHP 8.2+"),
+     * or null when no SKIPIF section is present or the output does not start with "skip".
+     */
+    public static function getSkipReason(string $phptFile): ?string
+    {
+        $sections = self::parsePhpt($phptFile);
+
+        if (!isset($sections[self::SKIPIF])) {
+            return null;
+        }
+
+        // Execute the SKIPIF script in a separate PHP process so that die()/exit() calls
+        // in the script do not terminate the current test run.
+        $tempFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
+
+        if ($tempFile === false) {
+            throw new \RuntimeException(\sprintf('Failed to create temporary file for SKIPIF evaluation of %s.', $phptFile));
+        }
+
+        if (\file_put_contents($tempFile, $sections[self::SKIPIF][0]) === false) {
+            \unlink($tempFile);
+
+            throw new \RuntimeException(\sprintf('Failed to write temporary SKIPIF file for %s.', $phptFile));
+        }
+
+        try {
+            /** @psalm-suppress ForbiddenCode */
+            $output = \trim((string) \shell_exec(\escapeshellarg(\PHP_BINARY) . ' ' . \escapeshellarg($tempFile)));
+        } finally {
+            \unlink($tempFile);
+        }
+
+        if (\stripos($output, 'skip') === 0) {
+            return \ltrim(\substr($output, 4));
+        }
+
+        return null;
     }
 
     /**
