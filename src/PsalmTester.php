@@ -72,7 +72,7 @@ final readonly class PsalmTester
 
         try {
             foreach ($tests as $id => $test) {
-                $args = $test->arguments ?: $this->defaultArguments;
+                $args = (string) \preg_replace('/\s+/', ' ', \trim($test->arguments ?: $this->defaultArguments));
                 $file = $this->createTemporaryCodeFile($test->code);
                 $allTempFiles[] = $file;
                 $groups[$args][$id] = [
@@ -121,10 +121,15 @@ final readonly class PsalmTester
                 $errorsByFile[$key][] = $error;
             }
 
-            return array_map(fn($entry) => $this->formatErrors(
-                $errorsByFile[\realpath($entry['file']) ?: $entry['file']] ?? [],
-                $entry['test']->codeFirstLine,
-            ), $entries);
+            $results = [];
+            foreach ($entries as $id => $entry) {
+                $results[$id] = $this->formatErrors(
+                    $errorsByFile[\realpath($entry['file']) ?: $entry['file']] ?? [],
+                    $entry['test']->codeFirstLine,
+                );
+            }
+
+            return $results;
         } finally {
             foreach ($entries as $entry) {
                 @unlink($entry['file']);
