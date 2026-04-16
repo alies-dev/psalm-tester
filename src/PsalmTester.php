@@ -16,17 +16,20 @@ final readonly class PsalmTester
         private string $psalmPath,
         private string $defaultArguments,
         private string $temporaryDirectory,
+        private bool $showProgress,
     ) {}
 
     public static function create(
         ?string $psalmPath = null,
         string $defaultArguments = '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
         ?string $temporaryDirectory = null,
+        bool $showProgress = true,
     ): self {
         return new self(
             psalmPath: $psalmPath ?? self::findPsalm(),
             defaultArguments: $defaultArguments,
             temporaryDirectory: self::resolveTemporaryDirectory($temporaryDirectory),
+            showProgress: $showProgress,
         );
     }
 
@@ -56,30 +59,183 @@ final readonly class PsalmTester
         return $temporaryDirectory;
     }
 
+    /**
+     * Run multiple tests in batched Psalm invocations (one per unique argument set).
+     * Returns formatted output per test — callers are responsible for assertions.
+     * @api
+     * @param array<array-key, PsalmTest> $tests keyed by identifier
+     * @return array<array-key, string> formatted output keyed by identifier
+     */
+    public function runBatch(array $tests): array
+    {
+        /** @var array<string, array<array-key, array{file: string, test: PsalmTest}>> */
+        $groups = [];
+        /** @var list<string> */
+        $allTempFiles = [];
+
+        try {
+            foreach ($tests as $id => $test) {
+                $args = (string) \preg_replace('/\s+/', ' ', \trim($test->arguments ?: $this->defaultArguments));
+                $file = $this->createTemporaryCodeFile($test->code);
+                $allTempFiles[] = $file;
+                $groups[$args][$id] = [
+                    'file' => $file,
+                    'test' => $test,
+                ];
+            }
+
+            $results = [];
+
+            foreach ($groups as $args => $entries) {
+                $groupCount = 0;
+                foreach ($this->runGroup($args, $entries) as $id => $output) {
+                    $results[$id] = $output;
+                    $groupCount++;
+                }
+                $this->writeProgress($args, $groupCount);
+            }
+
+            return $results;
+        } finally {
+            foreach ($allTempFiles as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                }
+            }
+        }
+    }
+
+    /**
+     * @param array<array-key, array{file: string, test: PsalmTest}> $entries
+     * @return array<array-key, string>
+     */
+    private function runGroup(string $args, array $entries): array
+    {
+        try {
+            $filePaths = array_map(
+                static fn(array $entry): string => $entry['file'],
+                $entries,
+            );
+
+            $output = $this->runPsalm($args, ...array_values($filePaths));
+            $decoded = $this->decodeOutput($output, $args);
+
+            /** @var array<string, list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>> $errorsByFile */
+            $errorsByFile = [];
+            foreach ($decoded as $error) {
+                $resolved = \realpath($error['file_path']);
+                $key = $resolved !== false ? $resolved : $error['file_path'];
+                $errorsByFile[$key][] = $error;
+            }
+
+            $results = [];
+            foreach ($entries as $id => $entry) {
+                $resolved = \realpath($entry['file']);
+                $key = $resolved !== false ? $resolved : $entry['file'];
+                $results[$id] = $this->formatErrors(
+                    $errorsByFile[$key] ?? [],
+                    $entry['test']->codeFirstLine,
+                );
+            }
+
+            return $results;
+        } finally {
+            foreach ($entries as $entry) {
+                @unlink($entry['file']);
+            }
+        }
+    }
+
     public function test(PsalmTest $test): void
     {
         $codeFile = $this->createTemporaryCodeFile($test->code);
 
         try {
-            $command = \sprintf(
-                '%s --output-format=json %s %s',
-                $this->psalmPath,
-                $test->arguments ?: $this->defaultArguments,
-                $codeFile,
-            );
+            $args = (string) \preg_replace('/\s+/', ' ', \trim($test->arguments ?: $this->defaultArguments));
+            $output = $this->runPsalm($args, $codeFile);
+            $decoded = $this->decodeOutput($output, $args);
+            $formattedOutput = $this->formatErrors($decoded, $test->codeFirstLine);
 
-            /** @psalm-suppress ForbiddenCode */
-            $output = shell_exec($command);
-
-            if (!\is_string($output)) {
-                throw new \RuntimeException(\sprintf('Failed to run command %s.', $command));
-            }
-
-            $formattedOutput = $this->formatOutput($output, $test->codeFirstLine);
-
+            $this->writeProgress($args, 1);
             Assert::assertThat($formattedOutput, $test->constraint);
         } finally {
             @unlink($codeFile);
+        }
+    }
+
+    /**
+     * @param string $args Pre-built argument string — trusted input from $this->defaultArguments or PsalmTest::$arguments (parsed from .phpt files).
+     *                     Not escaped, as it contains multiple shell-level arguments.
+     */
+    private function runPsalm(string $args, string ...$files): string
+    {
+        // Collapse any whitespace (including newlines from --ARGS-- sections) to single spaces
+        // to prevent newlines from being interpreted as shell command separators.
+        $args = (string) \preg_replace('/\s+/', ' ', \trim($args));
+
+        $command = \sprintf(
+            '%s --output-format=json %s %s',
+            escapeshellarg($this->psalmPath),
+            $args,
+            implode(' ', array_map(escapeshellarg(...), $files)),
+        );
+
+        /** @psalm-suppress ForbiddenCode */
+        $output = shell_exec($command);
+
+        if (!\is_string($output)) {
+            throw new \RuntimeException(\sprintf('Failed to run command %s.', $command));
+        }
+
+        return $output;
+    }
+
+    /**
+     * @return list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>
+     */
+    private function decodeOutput(string $output, string $args): array
+    {
+        try {
+            /** @var list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}> */
+            return json_decode($output, true, flags: \JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            throw new \RuntimeException(\sprintf(
+                "Failed to decode Psalm JSON output for args [%s]: %s\nOutput: %s",
+                $args,
+                $e->getMessage(),
+                $output,
+            ), previous: $e);
+        }
+    }
+
+    /**
+     * @param list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}> $errors
+     * @param positive-int $codeFirstLine
+     */
+    private function formatErrors(array $errors, int $codeFirstLine): string
+    {
+        /** @psalm-suppress PossiblyUndefinedStringArrayOffset */
+        usort($errors, static fn(array $a, array $b): int => ($a['line_from'] <=> $b['line_from'])
+            ?: ($a['column_from'] <=> $b['column_from'])
+            ?: ($a['type'] <=> $b['type'])
+            ?: ($a['message'] <=> $b['message']));
+
+        return implode("\n", array_map(
+            static fn(array $error): string => \sprintf(
+                '%s on line %d: %s',
+                $error['type'],
+                $error['line_from'] + $codeFirstLine - 1,
+                $error['message'],
+            ),
+            $errors,
+        ));
+    }
+
+    private function writeProgress(string $args, int $count): void
+    {
+        if ($this->showProgress) {
+            $displayArgs = \preg_replace('/\s+/', ' ', \trim($args)) ?? $args;
+            fwrite(\STDERR, \sprintf("%s: %d %s\n", $displayArgs, $count, $count === 1 ? 'test' : 'tests'));
         }
     }
 
@@ -91,24 +247,10 @@ final readonly class PsalmTester
             throw new \LogicException(\sprintf('Failed to create temporary code file in %s.', $this->temporaryDirectory));
         }
 
-        file_put_contents($file, $contents);
+        if (file_put_contents($file, $contents) === false) {
+            throw new \RuntimeException(\sprintf('Failed to write temporary code file: %s.', $file));
+        }
 
         return $file;
-    }
-
-    private function formatOutput(string $output, int $codeFirstLine): string
-    {
-        /** @var list<array{type: string, column_from: int, line_from: int, message: string, ...}> */
-        $decoded = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
-
-        return implode("\n", array_map(
-            static fn(array $error): string => \sprintf(
-                '%s on line %d: %s',
-                $error['type'],
-                $error['line_from'] + $codeFirstLine - 1,
-                $error['message'],
-            ),
-            $decoded,
-        ));
     }
 }
