@@ -84,7 +84,9 @@ final readonly class PsalmTester
             $results = [];
 
             foreach ($groups as $args => $entries) {
-                $results = array_merge($results, $this->runGroup($args, $entries));
+                foreach ($this->runGroup($args, $entries) as $id => $output) {
+                    $results[$id] = $output;
+                }
             }
 
             return $results;
@@ -152,6 +154,10 @@ final readonly class PsalmTester
      */
     private function runPsalm(string $args, string ...$files): string
     {
+        // Collapse any whitespace (including newlines from --ARGS-- sections) to single spaces
+        // to prevent newlines from being interpreted as shell command separators.
+        $args = (string) \preg_replace('/\s+/', ' ', \trim($args));
+
         $command = \sprintf(
             '%s --output-format=json %s %s',
             escapeshellarg($this->psalmPath),

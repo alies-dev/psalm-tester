@@ -47,9 +47,9 @@ Trace on line %d: $_list: non-empty-list<%s>
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 use PHPyh\PsalmTester\PsalmTester;
-use PHPyh\PsalmTester\StaticAnalysisTest;
+use PHPyh\PsalmTester\PsalmTest as PsalmTestFixture;
 
-final class PsalmTest extends TestCase
+final class MyPsalmTest extends TestCase
 {
     private ?PsalmTester $psalmTester = null;
 
@@ -57,7 +57,7 @@ final class PsalmTest extends TestCase
     public function testPhptFiles(string $phptFile): void
     {
         $this->psalmTester ??= PsalmTester::create();
-        $this->psalmTester->test(StaticAnalysisTest::fromPhptFile($phptFile));
+        $this->psalmTester->test(PsalmTestFixture::fromPhptFile($phptFile));
     }
 }
 ```
