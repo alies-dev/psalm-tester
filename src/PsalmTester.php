@@ -117,14 +117,17 @@ final readonly class PsalmTester
             /** @var array<string, list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>> $errorsByFile */
             $errorsByFile = [];
             foreach ($decoded as $error) {
-                $key = \realpath($error['file_path']) ?: $error['file_path'];
+                $resolved = \realpath($error['file_path']);
+                $key = $resolved !== false ? $resolved : $error['file_path'];
                 $errorsByFile[$key][] = $error;
             }
 
             $results = [];
             foreach ($entries as $id => $entry) {
+                $resolved = \realpath($entry['file']);
+                $key = $resolved !== false ? $resolved : $entry['file'];
                 $results[$id] = $this->formatErrors(
-                    $errorsByFile[\realpath($entry['file']) ?: $entry['file']] ?? [],
+                    $errorsByFile[$key] ?? [],
                     $entry['test']->codeFirstLine,
                 );
             }
