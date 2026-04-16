@@ -119,14 +119,10 @@ final readonly class PsalmTester
                 $errorsByFile[$key][] = $error;
             }
 
-            return array_map(function ($entry) use ($errorsByFile) {
-                $key = \realpath($entry['file']) ?: $entry['file'];
-
-                return $this->formatErrors(
-                    $errorsByFile[$key] ?? [],
-                    $entry['test']->codeFirstLine,
-                );
-            }, $entries);
+            return array_map(fn($entry) => $this->formatErrors(
+                $errorsByFile[\realpath($entry['file']) ?: $entry['file']] ?? [],
+                $entry['test']->codeFirstLine,
+            ), $entries);
         } finally {
             foreach ($entries as $entry) {
                 @unlink($entry['file']);
