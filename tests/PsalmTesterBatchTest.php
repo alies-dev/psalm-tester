@@ -18,6 +18,7 @@ final class PsalmTesterBatchTest extends TestCase
     {
         \putenv('STUB_SLEEP');
         \putenv('STUB_MODE');
+        \putenv('STUB_ENV_LOG_DIR');
     }
 
     public function testRunBatchPreservesInputOrderAndDistributesErrorsAcrossGroups(): void
@@ -145,6 +146,82 @@ final class PsalmTesterBatchTest extends TestCase
         // typical OS pipe buffer (16-64KB). Each error maps to one output line.
         $lineCount = \substr_count($results['big'], "\n") + 1;
         self::assertSame(3000, $lineCount);
+    }
+
+    public function testRunBatchGivesEachGroupIsolatedCacheDirAndCleansUp(): void
+    {
+        $tester = self::createTester();
+
+        $logDir = \sys_get_temp_dir() . '/psalm_tester_env_log_' . \bin2hex(\random_bytes(4));
+        self::assertTrue(\mkdir($logDir, 0777, true));
+
+        $scratchRootBefore = self::listScratchCacheDirs();
+
+        try {
+            \putenv('STUB_MODE=env_record');
+            \putenv('STUB_ENV_LOG_DIR=' . $logDir);
+
+            $tester->runBatch([
+                'a' => new PsalmTest(code: '<?php // a', constraint: new IsIdentical(''), arguments: '--config=a'),
+                'b' => new PsalmTest(code: '<?php // b', constraint: new IsIdentical(''), arguments: '--config=b'),
+                'c' => new PsalmTest(code: '<?php // c', constraint: new IsIdentical(''), arguments: '--config=c'),
+            ]);
+
+            /** @var list<array{XDG_CACHE_HOME: string, TMPDIR: string, TMP: string, TEMP: string, sys_get_temp_dir: string}> $records */
+            $records = [];
+            foreach (\glob($logDir . '/*.json') ?: [] as $file) {
+                /** @var array{XDG_CACHE_HOME: string, TMPDIR: string, TMP: string, TEMP: string, sys_get_temp_dir: string} $decoded */
+                $decoded = \json_decode((string) \file_get_contents($file), true, flags: \JSON_THROW_ON_ERROR);
+                $records[] = $decoded;
+            }
+
+            self::assertCount(3, $records, 'Each group should invoke the stub exactly once.');
+
+            $xdg = \array_column($records, 'XDG_CACHE_HOME');
+            $tmpdir = \array_column($records, 'TMPDIR');
+            self::assertCount(3, \array_unique($xdg), 'XDG_CACHE_HOME must differ across groups.');
+            self::assertCount(3, \array_unique($tmpdir), 'TMPDIR must differ across groups.');
+
+            // sys_get_temp_dir() honors TMPDIR unless php.ini's sys_temp_dir is set,
+            // in which case it ignores the env var entirely. Only assert the
+            // end-to-end override when sys_temp_dir is unset.
+            $sysTempDirIniSet = (string) \ini_get('sys_temp_dir') !== '';
+
+            foreach ($records as $record) {
+                self::assertNotSame('', $record['XDG_CACHE_HOME']);
+                self::assertSame($record['XDG_CACHE_HOME'], $record['TMPDIR']);
+                self::assertSame($record['XDG_CACHE_HOME'], $record['TMP']);
+                self::assertSame($record['XDG_CACHE_HOME'], $record['TEMP']);
+                self::assertStringStartsWith(\sys_get_temp_dir() . '/psalm_test/cache_', $record['XDG_CACHE_HOME']);
+
+                if (!$sysTempDirIniSet) {
+                    self::assertSame($record['XDG_CACHE_HOME'], $record['sys_get_temp_dir']);
+                }
+            }
+
+            self::assertSame(
+                $scratchRootBefore,
+                self::listScratchCacheDirs(),
+                'Per-group cache dirs must be cleaned up after runBatch returns.',
+            );
+        } finally {
+            foreach (\glob($logDir . '/*.json') ?: [] as $file) {
+                @\unlink($file);
+            }
+            @\rmdir($logDir);
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function listScratchCacheDirs(): array
+    {
+        /** @var list<string> $dirs */
+        $dirs = \glob(\sys_get_temp_dir() . '/psalm_test/cache_*', \GLOB_ONLYDIR) ?: [];
+        \sort($dirs);
+
+        return $dirs;
     }
 
     private static function createTester(string $defaultArguments = ''): PsalmTester

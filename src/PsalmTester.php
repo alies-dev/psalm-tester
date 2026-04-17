@@ -92,19 +92,22 @@ final readonly class PsalmTester
                 $results[$id] = '';
             }
 
-            /** @var array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> */
+            /** @var array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> */
             $running = [];
+            /** @var list<string> */
+            $allCacheDirs = [];
 
             try {
                 foreach ($groups as $args => $entries) {
-                    $running[] = $this->startGroup($args, $entries);
+                    $proc = $this->startGroup($args, $entries);
+                    $allCacheDirs[] = $proc['cacheDir'];
+                    $running[] = $proc;
                 }
 
                 $this->drainAndFinalize($running, $results);
 
                 return $results;
             } finally {
-                // Ensure any leftover processes (unreached in the success path) are cleaned up on exception.
                 foreach ($running as $proc) {
                     if ($proc['stdout'] !== null) {
                         @\fclose($proc['stdout']);
@@ -113,6 +116,9 @@ final readonly class PsalmTester
                         @\fclose($proc['stderr']);
                     }
                     @\proc_close($proc['process']);
+                }
+                foreach ($allCacheDirs as $dir) {
+                    self::removeDirectoryRecursive($dir);
                 }
             }
         } finally {
@@ -126,7 +132,7 @@ final readonly class PsalmTester
 
     /**
      * @param array<array-key, array{file: string, test: PsalmTest}> $entries
-     * @return array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: resource, stderr: resource, stdoutBuffer: string}
+     * @return array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: resource, stderr: resource, stdoutBuffer: string}
      */
     private function startGroup(string $args, array $entries): array
     {
@@ -142,15 +148,23 @@ final readonly class PsalmTester
             \implode(' ', array_map(\escapeshellarg(...), array_values($filePaths))),
         );
 
+        // Point Psalm and any plugins at a per-group scratch dir so concurrent groups
+        // don't race on a shared cache location. XDG_CACHE_HOME is what Psalm itself
+        // reads; TMPDIR/TMP/TEMP cover plugins that derive their cache from
+        // sys_get_temp_dir() (e.g. psalm-plugin-laravel's Plugin::getCacheLocation()).
+        $cacheDir = $this->createGroupCacheDir();
+        $env = self::buildChildEnv($cacheDir);
+
         $descriptors = [
             0 => ['pipe', 'r'],
             1 => ['pipe', 'w'],
             2 => ['pipe', 'w'],
         ];
         $pipes = [];
-        $process = \proc_open($command, $descriptors, $pipes);
+        $process = \proc_open($command, $descriptors, $pipes, null, $env);
 
         if (!\is_resource($process)) {
+            self::removeDirectoryRecursive($cacheDir);
             throw new \RuntimeException(\sprintf('Failed to run command %s.', $command));
         }
 
@@ -162,6 +176,7 @@ final readonly class PsalmTester
             'args' => $args,
             'entries' => $entries,
             'command' => $command,
+            'cacheDir' => $cacheDir,
             'process' => $process,
             'stdout' => $pipes[1],
             'stderr' => $pipes[2],
@@ -169,8 +184,62 @@ final readonly class PsalmTester
         ];
     }
 
+    private function createGroupCacheDir(): string
+    {
+        $dir = $this->temporaryDirectory . '/cache_' . \bin2hex(\random_bytes(8));
+
+        if (!\mkdir($dir, 0777, true) && !\is_dir($dir)) {
+            throw new \RuntimeException(\sprintf('Failed to create per-group cache directory %s.', $dir));
+        }
+
+        return $dir;
+    }
+
     /**
-     * @param array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> $running
+     * @return array<string, string>
+     */
+    private static function buildChildEnv(string $cacheDir): array
+    {
+        $env = \getenv() ?: [];
+        $env['XDG_CACHE_HOME'] = $cacheDir;
+        $env['TMPDIR'] = $cacheDir;
+        $env['TMP'] = $cacheDir;
+        $env['TEMP'] = $cacheDir;
+
+        return $env;
+    }
+
+    private static function removeDirectoryRecursive(string $dir): void
+    {
+        if (!\is_dir($dir)) {
+            return;
+        }
+
+        // Best-effort cleanup: this runs from runBatch's finally, so an iterator
+        // failure here must not mask the original exception.
+        try {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST,
+            );
+
+            foreach ($iterator as $entry) {
+                /** @var \SplFileInfo $entry */
+                if ($entry->isDir() && !$entry->isLink()) {
+                    @\rmdir($entry->getPathname());
+                } else {
+                    @\unlink($entry->getPathname());
+                }
+            }
+        } catch (\UnexpectedValueException) {
+            return;
+        }
+
+        @\rmdir($dir);
+    }
+
+    /**
+     * @param array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> $running
      * @param array<array-key, string> $results
      * @param-out array<array-key, string> $results
      */
@@ -235,7 +304,7 @@ final readonly class PsalmTester
     }
 
     /**
-     * @param array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string} $proc
+     * @param array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string} $proc
      * @param array<array-key, string> $results
      * @param-out array<array-key, string> $results
      */
