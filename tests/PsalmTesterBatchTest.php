@@ -182,13 +182,21 @@ final class PsalmTesterBatchTest extends TestCase
             self::assertCount(3, \array_unique($xdg), 'XDG_CACHE_HOME must differ across groups.');
             self::assertCount(3, \array_unique($tmpdir), 'TMPDIR must differ across groups.');
 
+            // sys_get_temp_dir() honors TMPDIR unless php.ini's sys_temp_dir is set,
+            // in which case it ignores the env var entirely. Only assert the
+            // end-to-end override when sys_temp_dir is unset.
+            $sysTempDirIniSet = (string) \ini_get('sys_temp_dir') !== '';
+
             foreach ($records as $record) {
                 self::assertNotSame('', $record['XDG_CACHE_HOME']);
                 self::assertSame($record['XDG_CACHE_HOME'], $record['TMPDIR']);
                 self::assertSame($record['XDG_CACHE_HOME'], $record['TMP']);
                 self::assertSame($record['XDG_CACHE_HOME'], $record['TEMP']);
-                self::assertSame($record['XDG_CACHE_HOME'], $record['sys_get_temp_dir']);
                 self::assertStringStartsWith(\sys_get_temp_dir() . '/psalm_test/cache_', $record['XDG_CACHE_HOME']);
+
+                if (!$sysTempDirIniSet) {
+                    self::assertSame($record['XDG_CACHE_HOME'], $record['sys_get_temp_dir']);
+                }
             }
 
             self::assertSame(

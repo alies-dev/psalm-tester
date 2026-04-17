@@ -200,7 +200,7 @@ final readonly class PsalmTester
      */
     private static function buildChildEnv(string $cacheDir): array
     {
-        $env = \getenv();
+        $env = \getenv() ?: [];
         $env['XDG_CACHE_HOME'] = $cacheDir;
         $env['TMPDIR'] = $cacheDir;
         $env['TMP'] = $cacheDir;
@@ -215,18 +215,24 @@ final readonly class PsalmTester
             return;
         }
 
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST,
-        );
+        // Best-effort cleanup: this runs from runBatch's finally, so an iterator
+        // failure here must not mask the original exception.
+        try {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST,
+            );
 
-        foreach ($iterator as $entry) {
-            /** @var \SplFileInfo $entry */
-            if ($entry->isDir() && !$entry->isLink()) {
-                @\rmdir($entry->getPathname());
-            } else {
-                @\unlink($entry->getPathname());
+            foreach ($iterator as $entry) {
+                /** @var \SplFileInfo $entry */
+                if ($entry->isDir() && !$entry->isLink()) {
+                    @\rmdir($entry->getPathname());
+                } else {
+                    @\unlink($entry->getPathname());
+                }
             }
+        } catch (\UnexpectedValueException) {
+            return;
         }
 
         @\rmdir($dir);
