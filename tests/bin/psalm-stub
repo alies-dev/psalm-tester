@@ -18,6 +18,26 @@ if ($mode === 'invalid_json') {
     exit(0);
 }
 
+if ($mode === 'env_record') {
+    $logDir = (string) \getenv('STUB_ENV_LOG_DIR');
+    if ($logDir !== '' && \is_dir($logDir)) {
+        $payload = [
+            'pid' => \getmypid(),
+            'XDG_CACHE_HOME' => (string) \getenv('XDG_CACHE_HOME'),
+            'TMPDIR' => (string) \getenv('TMPDIR'),
+            'TMP' => (string) \getenv('TMP'),
+            'TEMP' => (string) \getenv('TEMP'),
+            'sys_get_temp_dir' => \sys_get_temp_dir(),
+        ];
+        \file_put_contents(
+            $logDir . '/' . \getmypid() . '_' . \bin2hex(\random_bytes(4)) . '.json',
+            (string) \json_encode($payload),
+        );
+    }
+    \fwrite(\STDOUT, '[]');
+    exit(0);
+}
+
 /** @var list<string> $files */
 $files = [];
 foreach (\array_slice($argv, 1) as $arg) {
