@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace AliesDev\PsalmTester\Tests;
 
-use AliesDev\PsalmTester\Tests\Fixtures\PhptTestCase\FixturePhptCase;
+use AliesDev\PsalmTester\Tests\Fixtures\PsalmPhptTestCase\FixturePhptCase;
 use PHPUnit\Framework\TestCase;
 
-final class PhptTestCaseTest extends TestCase
+final class PsalmPsalmPhptTestCaseTest extends TestCase
 {
-    private const FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/FixturePhptCase.php';
-    private const ASSERTING_FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/AssertingFixturePhptCase.php';
-    private const BROKEN_FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/BrokenFixturePhptCase.php';
+    private const FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/FixturePhptCase.php';
+    private const ASSERTING_FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/AssertingFixturePhptCase.php';
+    private const BROKEN_FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/BrokenFixturePhptCase.php';
 
     private string $logDir = '';
 
@@ -37,7 +37,7 @@ final class PhptTestCaseTest extends TestCase
     {
         self::assertSame(
             ['alpha.phpt', 'beta.phpt', 'skipped.phpt', 'sub/gamma.phpt'],
-            \array_keys(\iterator_to_array(FixturePhptCase::providePhptFiles())),
+            \array_keys(\iterator_to_array(FixturePhptCase::phptFiles())),
         );
     }
 
@@ -49,6 +49,16 @@ final class PhptTestCaseTest extends TestCase
         self::assertSame(0, $exitCode, $output);
         self::assertMatchesRegularExpression(self::summary(tests: 4, assertions: 3, suffix: 'Skipped: 1'), $output);
         self::assertStringContainsString('fixture is always skipped', $output);
+    }
+
+    public function testAProcessIsolatedRunPasses(): void
+    {
+        // PHPUnit fails an isolated test whose child process wrote to stderr, so the default
+        // tester must stay quiet there.
+        [$exitCode, $output] = $this->runFixture(['--process-isolation']);
+
+        self::assertSame(0, $exitCode, $output);
+        self::assertMatchesRegularExpression(self::summary(tests: 4, assertions: 3, suffix: 'Skipped: 1'), $output);
     }
 
     public function testFilteredRunAnalyzesOnlyTheSelectedFile(): void

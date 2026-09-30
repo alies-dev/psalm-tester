@@ -52,6 +52,31 @@ final class ProcessRunnerTest extends TestCase
         self::assertSame([], \glob($this->scratch . '/tmp/*'));
     }
 
+    public function testAnExceptionFromTheCompletionCallbackKillsTheOtherChildren(): void
+    {
+        $pidFile = $this->scratch . '/sleeper.pid';
+        $jobs = [
+            'sleeper' => ['command' => [\PHP_BINARY, '-r', \sprintf('file_put_contents(%s, getmypid()); sleep(30);', \var_export($pidFile, true))]],
+            'quick' => ['command' => [\PHP_BINARY, '-r', \sprintf('while (!is_file(%s)) usleep(10000);', \var_export($pidFile, true))]],
+        ];
+
+        $start = \microtime(true);
+
+        try {
+            ProcessRunner::run($jobs, 2, $this->scratch . '/tmp', static function (string $id): void {
+                throw new \RuntimeException('callback failed for ' . $id);
+            });
+            self::fail('Expected the callback exception to propagate.');
+        } catch (\RuntimeException $e) {
+            self::assertSame('callback failed for quick', $e->getMessage());
+        }
+
+        self::assertLessThan(10.0, \microtime(true) - $start);
+        /** @psalm-suppress ForbiddenCode */
+        self::assertSame('', \trim((string) \shell_exec('ps -p ' . (int) \file_get_contents($pidFile) . ' -o pid= 2>/dev/null')), 'The sleeper survived.');
+        self::assertSame([], \glob($this->scratch . '/tmp/*'));
+    }
+
     public function testAFailedStartKillsRunningChildrenAndRemovesEveryTemporaryFile(): void
     {
         $pidFile = $this->scratch . '/sleeper.pid';
