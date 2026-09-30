@@ -7,7 +7,6 @@ namespace AliesDev\PsalmTester;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\TestSuite;
-use PHPUnit\TextUI\Configuration\Registry;
 
 /**
  * Runs every *.phpt file under phptDirectory() (recursively) as one data set of testPhpt(), named
@@ -48,12 +47,10 @@ abstract class PsalmPhptTestCase extends TestCase
         $relPaths = self::selectedRelPaths();
 
         // Unknown selection (e.g. a test run in a separate process): each test prepares itself,
-        // silently; the start line below is skipped under --process-isolation too, since PHPUnit
-        // treats an isolated test's child writing to STDERR as an error.
+        // silently.
         self::prepare($relPaths ?? []);
 
-        /** @psalm-suppress InternalClass, InternalMethod no public API exposes this, like selectedRelPaths() above */
-        if ($relPaths !== null && !Registry::get()->processIsolation()) {
+        if ($relPaths !== null) {
             self::reportStart($relPaths);
         }
     }

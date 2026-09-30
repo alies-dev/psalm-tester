@@ -61,14 +61,22 @@ final class PsalmPhptTestCaseTest extends TestCase
         self::assertMatchesRegularExpression(self::summary(tests: 4, assertions: 3, suffix: 'Skipped: 1'), $output);
     }
 
-    public function testPrintsOneStartLineWithFileSkipAndGroupCountsExceptWhenIsolated(): void
+    public function testPrintsOneStartLineWithFileSkipAndGroupCounts(): void
     {
         // The fixture: 4 files, 1 SKIPIF-skipped, the other 3 sharing the same (default) --ARGS--.
         [, $output] = $this->runFixture([]);
         self::assertStringContainsString('psalm-tester: 4 phpt files (1 skipped), 1 Psalm run', $output);
+    }
 
-        [, $isolatedOutput] = $this->runFixture(['--process-isolation']);
-        self::assertStringNotContainsString('psalm-tester:', $isolatedOutput);
+    public function testPrintsTheStartLineExactlyOnceUnderProcessIsolationToo(): void
+    {
+        // setUpBeforeClass() runs once in PHPUnit's coordinating process even with
+        // --process-isolation (the batching this class exists for depends on that), so the start
+        // line is safe there and the run must still pass.
+        [$exitCode, $output] = $this->runFixture(['--process-isolation']);
+
+        self::assertSame(0, $exitCode, $output);
+        self::assertSame(1, \substr_count($output, 'psalm-tester: 4 phpt files (1 skipped), 1 Psalm run'), $output);
     }
 
     public function testDataSetFilterSelectsANestedFileByItsRelativePath(): void
