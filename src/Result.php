@@ -65,7 +65,6 @@ final readonly class Result
             Outcome::Skipped => Assert::markTestSkipped((string) $this->reason),
             Outcome::XFailed => Assert::markTestIncomplete((string) $this->reason),
             Outcome::XPassed => Assert::fail(\sprintf('XPASS: %s now matches its expectation; remove --XFAIL-- (%s)', $this->phpt->path !== '' ? $this->phpt->path : '(in-code test)', (string) $this->reason)),
-            Outcome::Updated => Assert::assertTrue(true),
             Outcome::Error => Assert::fail((string) $this->reason),
         };
     }

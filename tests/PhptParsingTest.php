@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace AliesDev\PsalmTester\Tests;
 
 use AliesDev\PsalmTester\Expectation;
-use AliesDev\PsalmTester\ExpectationKind;
 use AliesDev\PsalmTester\Outcome;
 use AliesDev\PsalmTester\Phpt;
 use AliesDev\PsalmTester\PsalmTester;
@@ -82,32 +81,6 @@ final class PhptParsingTest extends TestCase
         self::assertEquals(Expectation::format("Trace on line %d: %s"), $test->expectation);
     }
 
-    public function testFromFileWithExpectExternalReadsReferencedFile(): void
-    {
-        $externalFile = $this->writeTempFile('expected external output');
-        $test = Phpt::fromFile($this->writeTempFile(<<<PHPT
-                --FILE--
-                <?php
-                --EXPECT_EXTERNAL--
-                {$externalFile}
-                PHPT));
-
-        self::assertEquals(new Expectation(ExpectationKind::Exact, 'expected external output', $externalFile), $test->expectation);
-    }
-
-    public function testFromFileWithExpectfExternalReadsReferencedFile(): void
-    {
-        $externalFile = $this->writeTempFile('Trace on line %d: %s');
-        $test = Phpt::fromFile($this->writeTempFile(<<<PHPT
-                --FILE--
-                <?php
-                --EXPECTF_EXTERNAL--
-                {$externalFile}
-                PHPT));
-
-        self::assertEquals(new Expectation(ExpectationKind::Format, 'Trace on line %d: %s', $externalFile), $test->expectation);
-    }
-
     /**
      * @return iterable<string, array{string, class-string<\Throwable>, string}>
      */
@@ -120,6 +93,8 @@ final class PhptParsingTest extends TestCase
         yield 'unimplemented CLEAN section' => ["--FILE--\n<?php\n--CLEAN--\nx\n--EXPECT--\n", \InvalidArgumentException::class, '/Section --CLEAN-- in .* is not supported by psalm-tester/'];
         yield 'unimplemented ENV section' => ["--FILE--\n<?php\n--ENV--\nx\n--EXPECT--\n", \InvalidArgumentException::class, '/Section --ENV-- in .* is not supported by psalm-tester/'];
         yield 'unimplemented INI section' => ["--FILE--\n<?php\n--INI--\nx\n--EXPECT--\n", \InvalidArgumentException::class, '/Section --INI-- in .* is not supported by psalm-tester/'];
+        yield 'unimplemented EXPECT_EXTERNAL section' => ["--FILE--\n<?php\n--EXPECT_EXTERNAL--\nx\n", \InvalidArgumentException::class, '/Section --EXPECT_EXTERNAL-- in .* is not supported by psalm-tester/'];
+        yield 'unimplemented EXPECTF_EXTERNAL section' => ["--FILE--\n<?php\n--EXPECTF_EXTERNAL--\nx\n", \InvalidArgumentException::class, '/Section --EXPECTF_EXTERNAL-- in .* is not supported by psalm-tester/'];
     }
 
     /**
@@ -202,15 +177,6 @@ final class PhptParsingTest extends TestCase
         $test = Phpt::fromFile($this->writeTempFile("--FILE--\n<?php\n--EXPECT--\n\n0\nlast"));
 
         self::assertSame("\n0\nlast", $test->expectation->text);
-    }
-
-    public function testFromFileResolvesARelativeExternalPathAgainstThePhptDirectory(): void
-    {
-        $external = $this->writeTempFile('expected via relative path');
-        $test = Phpt::fromFile($this->writeTempFile("--FILE--\n<?php\n--EXPECT_EXTERNAL--\n" . \basename($external)));
-
-        self::assertSame('expected via relative path', $test->expectation->text);
-        self::assertSame(\dirname($external) . \DIRECTORY_SEPARATOR . \basename($external), $test->expectation->externalPath);
     }
 
     private function writeTempFile(string $contents): string

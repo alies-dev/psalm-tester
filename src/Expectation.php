@@ -13,14 +13,11 @@ use PHPUnit\Framework\Constraint\StringMatchesFormatDescription;
  */
 final readonly class Expectation
 {
-    /**
-     * @param ?string $externalPath the file $text was read from (*_EXTERNAL sections), else null
-     */
     public function __construct(
         public ExpectationKind $kind,
         public string $text,
-        public ?string $externalPath = null,
     ) {}
+
     public static function exact(string $text): self
     {
         return new self(ExpectationKind::Exact, $text);

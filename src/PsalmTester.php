@@ -10,7 +10,7 @@ use Composer\InstalledVersions;
  * Runs .phpt tests through Psalm. Configure with the with*() methods, each returning a copy.
  *
  * @api
- * @psalm-type Options = array{psalm: ?string, config: string, arguments: list<string>, timeout: ?float, concurrency: ?positive-int, workingDirectory: ?string, env: array<string, string>, progress: bool, temporaryDirectory: ?string, update: ?bool}
+ * @psalm-type Options = array{psalm: ?string, config: string, arguments: list<string>, timeout: ?float, concurrency: ?positive-int, workingDirectory: ?string, env: array<string, string>, temporaryDirectory: ?string}
  * @psalm-type GroupEntries = array<array-key, array{file: string, phpt: Phpt}>
  * @psalm-type Group = array{argv: list<string>, entries: GroupEntries}
  */
@@ -23,7 +23,7 @@ final readonly class PsalmTester
 
     /**
      * Defaults: the vimeo/psalm binary installed via Composer, the bundled psalm.xml,
-     * --no-progress --no-diff, no timeout, one process per CPU core, no progress output.
+     * --no-progress --no-diff, no timeout, one process per CPU core.
      *
      */
     public static function create(): self
@@ -36,11 +36,7 @@ final readonly class PsalmTester
             'concurrency' => null,
             'workingDirectory' => null,
             'env' => [],
-            // Off by default: under --process-isolation PHPUnit treats any child stderr as an error.
-            'progress' => false,
             'temporaryDirectory' => null,
-            // null: resolved from PSALM_TESTER_UPDATE at run() time, not here, so create() stays pure.
-            'update' => null,
         ]);
     }
     public function withPsalm(string $binary): self
@@ -115,15 +111,6 @@ final readonly class PsalmTester
     }
 
     /**
-     * Whether to print one "<arguments>: <n> tests" line per Psalm run on STDERR (default off).
-     *
-     */
-    public function withProgress(bool $on): self
-    {
-        return new self(['progress' => $on] + $this->options);
-    }
-
-    /**
      * Where code files, SKIPIF scripts and per-run cache directories are created (default:
      * <system temp>/psalm_test). A relative path is resolved against the current directory now,
      * not against withWorkingDirectory().
@@ -133,18 +120,6 @@ final readonly class PsalmTester
         $isAbsolute = \str_starts_with($dir, '/') || \str_starts_with($dir, '\\') || \preg_match('/^[A-Za-z]:[\/\\\\]/', $dir) === 1;
 
         return new self(['temporaryDirectory' => $isAbsolute ? $dir : (\getcwd() ?: '.') . \DIRECTORY_SEPARATOR . $dir] + $this->options);
-    }
-
-    /**
-     * When on, run() rewrites a Failed test's --EXPECT-- section in place with its actual output
-     * and reports it as Outcome::Updated instead; never for --EXPECTF--, *_EXTERNAL or --XFAIL--
-     * tests (reported on STDERR as "not updated: <path> (<reason>)" instead). Default: the env
-     * var PSALM_TESTER_UPDATE ("1" or "true", case-insensitive).
-     *
-     */
-    public function withUpdate(bool $on): self
-    {
-        return new self(['update' => $on] + $this->options);
     }
 
     /**
@@ -194,105 +169,7 @@ final readonly class PsalmTester
             $results[$id] = $analyzed[$id] ?? Result::skipped($phpt, $skipReasons[$id] ?? '');
         }
 
-        if ($this->options['update'] ?? self::envUpdateDefault()) {
-            /** @var array<string, string> $rewritten real path => output written in this run */
-            $rewritten = [];
-
-            foreach ($results as $id => $result) {
-                // XFailed is included so a mismatching --XFAIL-- test is reported "not updated"
-                // (with progress on) instead of silently skipped; XFailed is never itself rewritten.
-                if ($result->outcome === Outcome::Failed || $result->outcome === Outcome::XFailed) {
-                    $results[$id] = $this->applyUpdate($result, $rewritten);
-                }
-            }
-        }
-
         return $results;
-    }
-
-    /**
-     *     required only because Psalm's impure-function list omits getenv() (like PhptParser's
-     *     file() call), so Psalm would otherwise report MissingPureAnnotation.
-     */
-    private static function envUpdateDefault(): bool
-    {
-        $value = \getenv('PSALM_TESTER_UPDATE');
-
-        return $value !== false && \in_array(\strtolower(\trim($value)), ['1', 'true'], true);
-    }
-
-    /**
-     * Rewrites $result's file with its actual output and returns an Outcome::Updated result, or
-     * the Failed result with "not updated: <path> (<why>)" as reason, which assert() shows. A
-     * rewrite failure affects only that file. The same line goes to STDERR only with
-     * withProgress(true): any stderr fails a --process-isolation test.
-     *
-     * @param array<string, string> $rewritten real path => output already written in this run
-     * @param-out array<string, string> $rewritten
-     */
-    private function applyUpdate(Result $result, array &$rewritten): Result
-    {
-        $phpt = $result->phpt;
-        $why = self::updateIneligibleReason($phpt);
-
-        if ($why === null) {
-            try {
-                // The same file twice in one run (e.g. under two keys): write it once; the second
-                // would otherwise see its own earlier rewrite as a change during the run.
-                $realPath = (string) \realpath($phpt->path);
-                $earlier = $rewritten[$realPath] ?? null;
-
-                if ($earlier === null) {
-                    PhptRewriter::rewriteExpect($phpt->path, $result->output, $phpt->sourceHash);
-                    $rewritten[$realPath] = $result->output;
-                } elseif ($earlier !== $result->output) {
-                    throw new \RuntimeException('rewritten earlier in this run with a different output');
-                }
-
-                $updated = new Result($phpt, Outcome::Updated, $result->output, $result->issues, \sprintf('updated: %s', $phpt->path));
-                $this->report((string) $updated->reason);
-
-                return $updated;
-            } catch (\RuntimeException|\LogicException $e) {
-                $why = $e->getMessage();
-            }
-        }
-
-        $notUpdated = \sprintf('not updated: %s (%s)', $phpt->path !== '' ? $phpt->path : '(in-code test)', $why);
-        $this->report($notUpdated);
-
-        // An XFailed result keeps its --XFAIL-- reason: that is what markTestIncomplete() shows.
-        return $result->outcome === Outcome::Failed
-            ? new Result($phpt, Outcome::Failed, $result->output, $result->issues, $notUpdated)
-            : $result;
-    }
-
-    private function report(string $line): void
-    {
-        if ($this->options['progress']) {
-            \fwrite(\STDERR, $line . "\n");
-        }
-    }
-
-    private static function updateIneligibleReason(Phpt $phpt): ?string
-    {
-        if ($phpt->xfail !== null) {
-            return 'has --XFAIL--';
-        }
-
-        if ($phpt->expectation->kind === ExpectationKind::Format) {
-            return $phpt->expectation->externalPath !== null ? 'EXPECTF_EXTERNAL cannot be rewritten' : 'EXPECTF cannot be rewritten';
-        }
-
-        if ($phpt->expectation->externalPath !== null) {
-            return 'EXPECT_EXTERNAL cannot be rewritten';
-        }
-
-        if ($phpt->path === '') {
-            return 'no source file to rewrite';
-        }
-
-        return null;
     }
 
     public function runOne(Phpt $phpt): Result
@@ -364,11 +241,6 @@ final readonly class PsalmTester
                     foreach ($this->groupResults($group, $args, $output, $exitCode, $signal) as $id => $result) {
                         /** @var TKey $id */
                         $results[$id] = $result;
-                    }
-
-                    if ($this->options['progress']) {
-                        $count = \count($group['entries']);
-                        \fwrite(\STDERR, \sprintf("%s: %d %s\n", $args, $count, $count === 1 ? 'test' : 'tests'));
                     }
                 },
                 $this->options['timeout'],
