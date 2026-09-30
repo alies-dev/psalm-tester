@@ -96,6 +96,7 @@ Psalm run.
 | `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--` | The path of a file holding the expectation, relative to the `.phpt` file. |
 | `--ARGS--` | Extra Psalm arguments for this test (see below). |
 | `--SKIPIF--` | A PHP script; if its output starts with `skip`, the test is skipped with the rest of that output as reason. |
+| `--XFAIL--` | A reason the test is expected to fail its expectation (see [Expected failures](#expected-failures)). |
 
 Any other section throws. `--CLEAN--`, `--ENV--` and `--INI--` from PHP's own phpt format are rejected with an explicit
 "not supported" message rather than silently ignored.
@@ -164,8 +165,8 @@ $result->assert(); // report it to PHPUnit: assertion with diff, skip, or failur
 `runOne(Phpt $phpt): Result` runs a single test the same way. `new Phpt(code: ..., expectation: Expectation::exact(...))`
 builds a test in code instead of from a file.
 
-`Outcome::XFailed`, `Outcome::XPassed` and `Phpt::$xfail` are reserved for upcoming `--XFAIL--` support; `run()` does
-not produce them yet.
+`Outcome::XFailed` and `Outcome::XPassed` come from a test's `--XFAIL--` section, see
+[Expected failures](#expected-failures).
 
 ## How tests run
 
@@ -190,6 +191,31 @@ With `withTimeout($seconds)`, a Psalm run still going `$seconds` after it starte
 does not count) is killed together with its child processes, and each of its tests gets `Outcome::Error` naming the
 arguments and the timeout. Other runs are unaffected.
 
+## Expected failures
+
+A `--XFAIL--` section (php-src semantics) documents a known, currently-unfixed mismatch instead of
+hiding it behind a green suite:
+
+```phpt
+--XFAIL--
+known limitation: see #123, Psalm cannot narrow this yet
+--FILE--
+<?php
+...
+--EXPECT--
+...
+```
+
+While the actual output still mismatches the expectation, the test is `Outcome::XFailed` and
+`assert()` reports it `markTestIncomplete()` with the `--XFAIL--` reason: visible in the run
+summary, but not a failure. Once the underlying issue is fixed and the output starts matching, the
+test becomes `Outcome::XPassed` and `assert()` fails with a message naming the file and telling you
+to remove the now-stale `--XFAIL--` section, so a fix doesn't silently stay undocumented.
+
+`--XFAIL--` replaces naming a fixture `*KnownLimitation.phpt`: that convention only documented
+intent in the filename, and stayed green forever even after the limitation was fixed. `--XFAIL--`
+tests are never rewritten by [update mode](#update-mode).
+
 ## Update mode
 
 With `withUpdate(true)` (or the env var `PSALM_TESTER_UPDATE=1`, e.g. `PSALM_TESTER_UPDATE=1 vendor/bin/phpunit`),
@@ -198,9 +224,9 @@ With `withUpdate(true)` (or the env var `PSALM_TESTER_UPDATE=1`, e.g. `PSALM_TES
 is left untouched.
 
 `--EXPECTF--`, `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` tests are never rewritten (a format string or an
-external file has no single "actual output" to substitute), and neither are `--XFAIL--` tests (see below): these stay
-`Outcome::Failed` and are listed once on STDERR as `not updated: <path> (<reason>)`. Rewritten files are listed as
-`updated: <path>`.
+external file has no single "actual output" to substitute), and neither are
+[`--XFAIL--`](#expected-failures) tests: these stay `Outcome::Failed` (or `Outcome::XFailed`) and are listed once on
+STDERR as `not updated: <path> (<reason>)`. Rewritten files are listed as `updated: <path>`.
 
 ## Upgrading from 0.3
 

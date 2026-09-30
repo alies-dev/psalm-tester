@@ -17,7 +17,7 @@ final readonly class Phpt
      *     --config in them replaces the tester's configured config
      * @param positive-int $codeFirstLine line of the .phpt file that $code starts on
      * @param ?string $skipif the --SKIPIF-- script, if any
-     * @param ?string $xfail reserved for --XFAIL-- support; always null for now
+     * @param ?string $xfail the --XFAIL-- reason, if any: the test is expected to fail its expectation
      * @param string $path the .phpt file this was parsed from ('' when built in code)
      * @psalm-mutation-free
      */
@@ -48,6 +48,7 @@ final readonly class Phpt
             arguments: $sections['ARGS'][0] ?? '',
             codeFirstLine: $sections['FILE'][1],
             skipif: $sections['SKIPIF'][0] ?? null,
+            xfail: $sections['XFAIL'][0] ?? null,
             path: $path,
         );
     }

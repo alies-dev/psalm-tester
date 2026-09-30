@@ -105,6 +105,14 @@ final class PsalmTesterUpdateTest extends TestCase
         self::assertStringContainsString(\sprintf('updated: %s', $file), $stderr);
     }
 
+    public function testXfailTestsAreNeverRewrittenUnderUpdateMode(): void
+    {
+        $file = $this->writePhpt("--XFAIL--\nknown limitation\n--FILE--\n<?php // xfail-report\n--EXPECT--\nwrong\n");
+        $stderr = $this->runInSubprocess($file, true);
+
+        self::assertStringContainsString(\sprintf('not updated: %s (has --XFAIL--)', $file), $stderr);
+    }
+
     public function testUpdatePreservesCrlfLineEndings(): void
     {
         $file = $this->writePhpt("--FILE--\r\n<?php // crlf\r\n--EXPECT--\r\nstale\r\n");

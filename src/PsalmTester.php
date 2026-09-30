@@ -204,7 +204,9 @@ final readonly class PsalmTester
 
         if ($this->options['update'] ?? self::envUpdateDefault()) {
             foreach ($results as $id => $result) {
-                if ($result->outcome === Outcome::Failed) {
+                // XFailed is included so a mismatching --XFAIL-- test is reported "not updated"
+                // (its reason) instead of silently skipped; XFailed is never itself rewritten.
+                if ($result->outcome === Outcome::Failed || $result->outcome === Outcome::XFailed) {
                     $results[$id] = self::applyUpdate($result);
                 }
             }

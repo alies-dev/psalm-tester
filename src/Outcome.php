@@ -12,9 +12,9 @@ enum Outcome
     case Passed;
     case Failed;
     case Skipped;
-    /** Reserved for --XFAIL-- support: failed as expected. */
+    /** --XFAIL--: failed to meet its expectation, as expected. */
     case XFailed;
-    /** Reserved for --XFAIL-- support: passed although expected to fail. */
+    /** --XFAIL--: met its expectation although expected not to. */
     case XPassed;
     /** Reserved for update mode: the expectation was rewritten to the actual output. */
     case Updated;
