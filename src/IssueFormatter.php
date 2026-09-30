@@ -48,10 +48,6 @@ final class IssueFormatter
 
         return $errorsByFile;
     }
-
-    /**
-     * @psalm-pure
-     */
     private static function invalidOutput(string $args, string $problem, string $output): \UnexpectedValueException
     {
         return new \UnexpectedValueException(\sprintf(

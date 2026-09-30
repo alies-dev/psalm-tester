@@ -14,7 +14,6 @@ final readonly class Result
     /**
      * @internal build Results with fromAnalysis(), skipped() or error(), which keep outcome and output consistent
      * @param list<Issue> $issues
-     * @psalm-mutation-free
      */
     public function __construct(
         public Phpt $phpt,
@@ -41,7 +40,6 @@ final readonly class Result
 
     /**
      * @internal
-     * @psalm-pure
      */
     public static function skipped(Phpt $phpt, string $reason): self
     {
@@ -50,7 +48,6 @@ final readonly class Result
 
     /**
      * @internal
-     * @psalm-pure
      */
     public static function error(Phpt $phpt, string $reason): self
     {
@@ -64,11 +61,15 @@ final readonly class Result
     public function assert(): void
     {
         match ($this->outcome) {
-            Outcome::Passed, Outcome::Failed => Assert::assertThat($this->output, $this->phpt->expectation->constraint(), (string) $this->reason),
+            Outcome::Passed => Assert::assertThat($this->output, $this->phpt->expectation->constraint(), (string) $this->reason),
+            Outcome::Failed => Assert::assertThat(
+                $this->output,
+                $this->phpt->expectation->constraint(),
+                FailureReport::build($this->phpt->expectation, $this->issues, $this->phpt->code, $this->phpt->codeFirstLine) ?? '',
+            ),
             Outcome::Skipped => Assert::markTestSkipped((string) $this->reason),
             Outcome::XFailed => Assert::markTestIncomplete((string) $this->reason),
             Outcome::XPassed => Assert::fail(\sprintf('XPASS: %s now matches its expectation; remove --XFAIL-- (%s)', $this->phpt->path !== '' ? $this->phpt->path : '(in-code test)', (string) $this->reason)),
-            Outcome::Updated => Assert::assertTrue(true),
             Outcome::Error => Assert::fail((string) $this->reason),
         };
     }

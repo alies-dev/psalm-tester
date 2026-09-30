@@ -8,24 +8,20 @@ declare(strict_types=1);
 // every group of a batch, or per invocation from --stub-* arguments in a group's argument string:
 //   --stub-sleep=<seconds>    overrides STUB_SLEEP
 //   --stub-mode=<mode>        overrides STUB_MODE (empty: no issues at all; no_output: prints nothing)
-//   --stub-await-pids=<n>     first wait until STUB_PID_DIR holds <n> pid files
-// STUB_PID_DIR: each invocation writes its pid there. STUB_STDERR: text written to stderr.
+// STUB_STDERR: text written to stderr.
 // STUB_STDERR_BYTES: that many bytes written to stderr. STUB_POPULATE_CACHE: nested files
-// written under XDG_CACHE_HOME, as a real cache would be.
+// written under XDG_CACHE_HOME, as a real cache would be. STUB_START_MARKER: that file is
+// created the moment this process starts, before anything else (even the sleep).
+
+$startMarker = (string) \getenv('STUB_START_MARKER');
+if ($startMarker !== '') {
+    \touch($startMarker);
+}
 
 $options = [];
 foreach ($argv as $arg) {
     if (\is_string($arg) && \preg_match('/^--stub-([a-z-]+)=(.*)$/', $arg, $m) === 1) {
         $options[$m[1]] = $m[2];
-    }
-}
-
-$pidDir = (string) \getenv('STUB_PID_DIR');
-if ($pidDir !== '') {
-    \file_put_contents($pidDir . '/' . \getmypid(), '');
-    $awaitPids = (int) ($options['await-pids'] ?? 0);
-    while (\count(\glob($pidDir . '/*') ?: []) < $awaitPids) {
-        \usleep(10_000);
     }
 }
 

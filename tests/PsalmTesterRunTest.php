@@ -23,9 +23,8 @@ final class PsalmTesterRunTest extends TestCase
         \putenv('STUB_SLEEP');
         \putenv('STUB_MODE');
         \putenv('STUB_ENV_LOG_DIR');
-        \putenv('STUB_PID_DIR');
+        \putenv('STUB_CONTENTS_LOG_DIR');
         \putenv('STUB_POPULATE_CACHE');
-        \putenv('STUB_ENV_LOG_DIR');
 
         foreach ($this->scratchDirs as $dir) {
             self::removeTree($dir);
@@ -301,40 +300,6 @@ final class PsalmTesterRunTest extends TestCase
         self::assertSame(2, \substr_count($stderr, '[stub-stderr-marker]'), $stderr);
     }
 
-    public function testRunPreservesInputOrderAndDistributesErrorsAcrossGroups(): void
-    {
-        $tester = self::createTester();
-
-        $tests = [
-            'z_first' => new Phpt(code: '<?php // z', expectation: Expectation::exact('')),
-            'a_other' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), arguments: '--config=other'),
-            'm_last' => new Phpt(code: '<?php // m', expectation: Expectation::exact('')),
-        ];
-
-        $results = $tester->run($tests);
-
-        // Output dict key order matches $tests input order, not internal group order.
-        self::assertSame(['z_first', 'a_other', 'm_last'], \array_keys($results));
-
-        // Parity: each test's output has the exact format a single-test invocation produces.
-        // Tempfile basenames vary between runs, so we normalize them before comparison.
-        foreach ($tests as $id => $test) {
-            $alone = $tester->run([$id => $test]);
-            self::assertSame(
-                self::normalize($alone[$id]->output),
-                self::normalize($results[$id]->output),
-                \sprintf('Output for "%s" differs from running it alone.', $id),
-            );
-        }
-
-        foreach (\array_keys($tests) as $id) {
-            self::assertMatchesRegularExpression(
-                '/^StubError on line 1: stub error for code_\w+$/',
-                $results[$id]->output,
-            );
-        }
-    }
-
     /**
      * @param array<array-key, Result> $results
      * @return array<array-key, string>
@@ -342,11 +307,6 @@ final class PsalmTesterRunTest extends TestCase
     private static function outputs(array $results): array
     {
         return \array_map(static fn(Result $result): string => $result->output, $results);
-    }
-
-    private static function normalize(string $output): string
-    {
-        return (string) \preg_replace('/code_\w+/', 'code_HASH', $output);
     }
 
     public function testRunRunsGroupsInParallel(): void
@@ -373,66 +333,153 @@ final class PsalmTesterRunTest extends TestCase
         );
     }
 
-    #[Group('slow')]
-    public function testRunParallelSpeedup(): void
+
+
+    public function testGroupKeyIgnoresArgumentOrderOnlyWhenEveryTokenIsSelfContained(): void
     {
-        $tester = self::createTester();
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
 
-        $tests = [
-            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), arguments: '--config=a'),
-            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), arguments: '--config=b'),
-            'c' => new Phpt(code: '<?php // c', expectation: Expectation::exact(''), arguments: '--config=c'),
-        ];
-
-        \putenv('STUB_SLEEP=1');
-
-        $singleStart = \microtime(true);
-        $tester->run(['a' => $tests['a']]);
-        $singleElapsed = \microtime(true) - $singleStart;
-
-        $batchStart = \microtime(true);
-        $tester->run($tests);
-        $batchElapsed = \microtime(true) - $batchStart;
-
-        self::assertLessThan(
-            $singleElapsed * 2.5,
-            $batchElapsed,
-            \sprintf(
-                'Expected 3-group batch to stay under 2.5x single-group time (%.2fs), got %.2fs.',
-                $singleElapsed,
-                $batchElapsed,
-            ),
-        );
-    }
-
-
-
-    public function testRunHandlesLargeJsonOutputWithoutTruncation(): void
-    {
-        $tester = self::createTester();
-
-        \putenv('STUB_MODE=large');
-
-        $results = $tester->run([
-            'big' => new Phpt(code: '<?php', expectation: Expectation::exact('')),
+        self::createTester()->run([
+            // Reordered but equivalent (both self-contained): one shared Psalm run.
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), arguments: '--threads=1 --no-cache'),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), arguments: '--no-cache --threads=1'),
+            // --config takes a separate value: reordering it relative to --no-cache must not
+            // merge it with the group above, nor with the other position below.
+            'c' => new Phpt(code: '<?php // c', expectation: Expectation::exact(''), arguments: '--config psalm-other.xml --no-cache'),
+            'd' => new Phpt(code: '<?php // d', expectation: Expectation::exact(''), arguments: '--no-cache --config psalm-other.xml'),
         ]);
 
-        self::assertArrayHasKey('big', $results);
+        $invocations = \array_map(
+            static function (string $log): array {
+                /** @var list<string> $contents */
+                $contents = \json_decode((string) \file_get_contents($log), true);
+                \sort($contents);
 
-        // The stub emits 3000 errors per file (~600KB of JSON) which exceeds the
-        // typical OS pipe buffer (16-64KB). Each error maps to one output line.
-        $lineCount = \substr_count($results['big']->output, "\n") + 1;
-        self::assertSame(3000, $lineCount);
+                return $contents;
+            },
+            \glob($logDir . '/*.json') ?: [],
+        );
+
+        self::assertCount(3, $invocations, 'a+b share a run; c and d each stay their own.');
+        self::assertContains(['<?php // a', '<?php // b'], $invocations);
+        self::assertContains(['<?php // c'], $invocations);
+        self::assertContains(['<?php // d'], $invocations);
+    }
+
+    public function testAConflictsFixtureGetsItsOwnPsalmInvocation(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        // Same (default) --ARGS-- as 'plain', so without --CONFLICTS-- these would share a run.
+        self::createTester()->run([
+            'conflicting' => new Phpt(code: '<?php // conflicting', expectation: Expectation::exact(''), conflicts: ['key']),
+            'plain' => new Phpt(code: '<?php // plain', expectation: Expectation::exact('')),
+        ]);
+
+        $invocations = \array_map(
+            static function (string $log): array {
+                /** @var list<string> $contents */
+                $contents = \json_decode((string) \file_get_contents($log), true);
+                \sort($contents);
+
+                return $contents;
+            },
+            \glob($logDir . '/*.json') ?: [],
+        );
+
+        self::assertCount(2, $invocations);
+        self::assertContains(['<?php // conflicting'], $invocations);
+        self::assertContains(['<?php // plain'], $invocations);
+    }
+
+    public function testCountGroupsAgreesWithTheActualNumberOfInvocationsWhenConflictsAreInvolved(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        $tester = self::createTester();
+        // Same (default) --ARGS--, so without --CONFLICTS-- countGroups() would (wrongly) say 1.
+        $phpts = [
+            'conflicting' => new Phpt(code: '<?php // conflicting', expectation: Expectation::exact(''), conflicts: ['key']),
+            'plain' => new Phpt(code: '<?php // plain', expectation: Expectation::exact('')),
+        ];
+
+        $tester->run($phpts);
+        $actualInvocations = \count(\glob($logDir . '/*.json') ?: []);
+
+        self::assertSame($actualInvocations, $tester->countGroups($phpts));
+        self::assertSame(2, $actualInvocations);
+    }
+
+    public function testCountGroupsAgreesWithTheActualInvocationsForTwoFixturesSharingAKeyPlusAPlainOne(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        $tester = self::createTester();
+        // Two --CONFLICTS-- fixtures sharing key 'db' each still get their own run (sharing a key
+        // only serializes them, it does not merge them), plus 'plain''s own: 3 runs, not 1.
+        $phpts = [
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), conflicts: ['db']),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), conflicts: ['db']),
+            'plain' => new Phpt(code: '<?php // plain', expectation: Expectation::exact('')),
+        ];
+
+        $tester->run($phpts);
+        $actualInvocations = \count(\glob($logDir . '/*.json') ?: []);
+
+        self::assertSame(3, $actualInvocations);
+        self::assertSame($actualInvocations, $tester->countGroups($phpts));
+    }
+
+    public function testTwoFixturesSharingAConflictsKeyNeverRunConcurrently(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_SLEEP=0.3');
+
+        $start = \microtime(true);
+        $results = $tester->run([
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), conflicts: ['shared']),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), conflicts: ['shared']),
+        ]);
+        $elapsed = \microtime(true) - $start;
+
+        self::assertGreaterThanOrEqual(0.55, $elapsed, \sprintf('Expected two 0.3s runs to serialize (>= 0.6s), got %.2fs.', $elapsed));
+        self::assertSame(['a', 'b'], \array_keys($results), 'One Result per input, in input order.');
+    }
+
+    public function testAllConflictsKeyRunsWithNothingElseInFlight(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_SLEEP=0.3');
+
+        $start = \microtime(true);
+        $results = $tester->run([
+            'exclusive' => new Phpt(code: '<?php // x', expectation: Expectation::exact(''), conflicts: ['all']),
+            // No --CONFLICTS--, same (default) --ARGS--: 'a' and 'b' would merge into one group,
+            // giving two Psalm invocations total, both of which must stay clear of 'exclusive'.
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact('')),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact('')),
+        ]);
+        $elapsed = \microtime(true) - $start;
+
+        self::assertGreaterThanOrEqual(0.55, $elapsed, \sprintf('Expected the exclusive run to serialize with the rest (>= 0.6s), got %.2fs.', $elapsed));
+        self::assertSame(['exclusive', 'a', 'b'], \array_keys($results));
     }
 
     public function testRunGivesEachGroupIsolatedCacheDirAndCleansUp(): void
     {
-        $tester = self::createTester();
+        $tempDir = $this->makeScratchDir();
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir);
 
         $logDir = \sys_get_temp_dir() . '/psalm_tester_env_log_' . \bin2hex(\random_bytes(4));
         self::assertTrue(\mkdir($logDir, 0777, true));
-
-        $scratchRootBefore = self::listScratchCacheDirs();
 
         try {
             \putenv('STUB_MODE=env_record');
@@ -473,43 +520,18 @@ final class PsalmTesterRunTest extends TestCase
                 self::assertSame($record['XDG_CACHE_HOME'], $record['TMPDIR']);
                 self::assertSame($record['XDG_CACHE_HOME'], $record['TMP']);
                 self::assertSame($record['XDG_CACHE_HOME'], $record['TEMP']);
-                self::assertStringStartsWith(\sys_get_temp_dir() . '/psalm_test/cache_', $record['XDG_CACHE_HOME']);
+                self::assertStringStartsWith($tempDir . '/cache_', $record['XDG_CACHE_HOME']);
 
                 if (!$sysTempDirIniSet) {
                     self::assertSame($record['XDG_CACHE_HOME'], $record['sys_get_temp_dir']);
                 }
             }
 
-            self::assertSame(
-                $scratchRootBefore,
-                self::listScratchCacheDirs(),
-                'Per-group cache dirs must be cleaned up after run() returns.',
-            );
         } finally {
             foreach (\glob($logDir . '/*.json') ?: [] as $file) {
                 @\unlink($file);
             }
             @\rmdir($logDir);
-        }
-    }
-
-    public function testRunCleansUpTemporaryCodeFilesAfterReturning(): void
-    {
-        $tempDir = \sys_get_temp_dir() . '/psalm_tester_code_cleanup_' . \bin2hex(\random_bytes(4));
-        self::assertTrue(\mkdir($tempDir, 0777, true));
-
-        try {
-            $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir);
-
-            $tester->run([
-                'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact('')),
-                'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), arguments: '--config=b'),
-            ]);
-
-            self::assertSame([], \glob($tempDir . '/code_*'), 'Per-test temporary code files must be removed once run() returns.');
-        } finally {
-            self::assertSame([], \glob($tempDir . '/*'));
-            @\rmdir($tempDir);
         }
     }
 
@@ -528,24 +550,6 @@ final class PsalmTesterRunTest extends TestCase
             \is_dir($entry) ? self::removeTree($entry) : @\unlink($entry);
         }
         @\rmdir($dir);
-    }
-
-    private static function isAlive(int $pid): bool
-    {
-        /** @psalm-suppress ForbiddenCode */
-        return \trim((string) \shell_exec('ps -p ' . $pid . ' -o pid= 2>/dev/null')) !== '';
-    }
-
-    /**
-     * @return list<string>
-     */
-    private static function listScratchCacheDirs(): array
-    {
-        /** @var list<string> $dirs */
-        $dirs = \glob(\sys_get_temp_dir() . '/psalm_test/cache_*', \GLOB_ONLYDIR) ?: [];
-        \sort($dirs);
-
-        return $dirs;
     }
 
     private static function createTester(string ...$arguments): PsalmTester

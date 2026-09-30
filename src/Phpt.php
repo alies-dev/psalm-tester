@@ -19,9 +19,9 @@ final readonly class Phpt
      * @param ?string $skipif the --SKIPIF-- script, if any
      * @param ?string $xfail the --XFAIL-- reason, if any: the test is expected to fail its expectation
      * @param string $path the .phpt file this was parsed from ('' when built in code)
-     * @param ?string $sourceHash sha1 of the bytes parsed, so update mode can tell whether the
-     *     file changed since (null when built in code)
-     * @psalm-mutation-free
+     * @param list<string> $conflicts --CONFLICTS-- keys, one per line: this test is never
+     *     analyzed at the same time as another test sharing one of them; "all" excludes every
+     *     other test, conflicting or not, while it runs
      */
     public function __construct(
         public string $code,
@@ -31,7 +31,7 @@ final readonly class Phpt
         public ?string $skipif = null,
         public ?string $xfail = null,
         public string $path = '',
-        public ?string $sourceHash = null,
+        public array $conflicts = [],
     ) {}
 
     /**
@@ -59,8 +59,26 @@ final readonly class Phpt
             skipif: $sections['SKIPIF'][0] ?? null,
             xfail: isset($sections['XFAIL']) ? \rtrim($sections['XFAIL'][0]) : null,
             path: $path,
-            sourceHash: \sha1($raw),
+            conflicts: self::parseConflicts($sections['CONFLICTS'][0] ?? ''),
         );
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function parseConflicts(string $text): array
+    {
+        $keys = [];
+
+        foreach (\explode("\n", $text) as $line) {
+            $line = \trim($line);
+
+            if ($line !== '') {
+                $keys[] = $line;
+            }
+        }
+
+        return $keys;
     }
 
     /**
@@ -76,32 +94,6 @@ final readonly class Phpt
             return Expectation::format($sections['EXPECTF'][0]);
         }
 
-        foreach (['EXPECT_EXTERNAL' => ExpectationKind::Exact, 'EXPECTF_EXTERNAL' => ExpectationKind::Format] as $section => $kind) {
-            if (isset($sections[$section])) {
-                $externalPath = $sections[$section][0];
-
-                if (!self::isAbsolutePath($externalPath)) {
-                    $externalPath = \dirname($path) . \DIRECTORY_SEPARATOR . $externalPath;
-                }
-
-                $contents = file_get_contents($externalPath);
-
-                if ($contents === false) {
-                    throw new \RuntimeException(\sprintf('Failed to read file %s.', $externalPath));
-                }
-
-                return new Expectation($kind, $contents, $externalPath);
-            }
-        }
-
         throw new \LogicException(\sprintf('File %s must have an EXPECT* section.', $path));
-    }
-
-    /**
-     * @psalm-pure
-     */
-    private static function isAbsolutePath(string $path): bool
-    {
-        return \str_starts_with($path, '/') || \str_starts_with($path, '\\') || \preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1;
     }
 }

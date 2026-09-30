@@ -7,7 +7,7 @@ namespace AliesDev\PsalmTester\Tests;
 use AliesDev\PsalmTester\Tests\Fixtures\PsalmPhptTestCase\FixturePhptCase;
 use PHPUnit\Framework\TestCase;
 
-final class PsalmPsalmPhptTestCaseTest extends TestCase
+final class PsalmPhptTestCaseTest extends TestCase
 {
     private const FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/FixturePhptCase.php';
     private const ASSERTING_FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/AssertingFixturePhptCase.php';
@@ -61,13 +61,86 @@ final class PsalmPsalmPhptTestCaseTest extends TestCase
         self::assertMatchesRegularExpression(self::summary(tests: 4, assertions: 3, suffix: 'Skipped: 1'), $output);
     }
 
-    public function testFilteredRunAnalyzesOnlyTheSelectedFile(): void
+    public function testPrintsOneStartLineWithFileSkipAndGroupCounts(): void
     {
-        [$exitCode, $output] = $this->runFixture(['--filter', 'beta']);
+        // The fixture: 4 files, 1 SKIPIF-skipped, the other 3 sharing the same (default) --ARGS--.
+        [, $output] = $this->runFixture([]);
+        self::assertStringContainsString('psalm-tester: 4 phpt files (1 skipped), 1 Psalm run', $output);
+    }
 
-        self::assertSame([['<?php // beta']], $this->analyzedContents());
+    public function testTheStartLineIsSingularForOneFileAndOneRun(): void
+    {
+        [, $output] = $this->runFixture(['--filter', 'testPhpt@sub/gamma.phpt']);
+
+        self::assertStringContainsString('psalm-tester: 1 phpt file (0 skipped), 1 Psalm run', $output);
+        self::assertStringNotContainsString('1 phpt files', $output);
+        self::assertStringNotContainsString('1 Psalm runs', $output);
+    }
+
+    public function testPrintsTheStartLineExactlyOnceUnderProcessIsolationToo(): void
+    {
+        // setUpBeforeClass() runs once in PHPUnit's coordinating process even with
+        // --process-isolation (the batching this class exists for depends on that), so the start
+        // line is safe there and the run must still pass.
+        [$exitCode, $output] = $this->runFixture(['--process-isolation']);
+
         self::assertSame(0, $exitCode, $output);
-        self::assertMatchesRegularExpression(self::summary(tests: 1, assertions: 1), $output);
+        self::assertSame(1, \substr_count($output, 'psalm-tester: 4 phpt files (1 skipped), 1 Psalm run'), $output);
+    }
+
+    public function testTheStartLineAppearsBeforeAnyPsalmProcessStarts(): void
+    {
+        // The stub creates $marker the instant it starts, before even its own sleep: an ordering
+        // check (does $marker exist yet when the line is first seen), not a wall-clock bound, so
+        // this cannot flake on a slow CI runner the way a fixed time budget would.
+        $marker = $this->logDir . '/started';
+        $root = \dirname(__DIR__);
+        $command = [
+            \PHP_BINARY,
+            $root . '/vendor/bin/phpunit',
+            '--no-configuration',
+            '--bootstrap',
+            $root . '/vendor/autoload.php',
+            '--no-progress',
+            '--colors=never',
+            self::FIXTURE,
+        ];
+
+        $env = \getenv();
+        $env['STUB_MODE'] = 'record_contents';
+        $env['STUB_CONTENTS_LOG_DIR'] = $this->logDir;
+        $env['STUB_START_MARKER'] = $marker;
+        $env['STUB_SLEEP'] = '1';
+
+        $pipes = [];
+        $process = \proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, $env);
+        self::assertIsResource($process);
+        \stream_set_blocking($pipes[1], false);
+        \stream_set_blocking($pipes[2], false);
+
+        $output = '';
+        $markerExistedWhenSeen = null;
+
+        do {
+            $output .= (string) \stream_get_contents($pipes[1]) . (string) \stream_get_contents($pipes[2]);
+
+            if ($markerExistedWhenSeen === null && \str_contains($output, 'psalm-tester:')) {
+                $markerExistedWhenSeen = \file_exists($marker);
+            }
+
+            $running = \proc_get_status($process)['running'];
+
+            if ($running) {
+                \usleep(10_000);
+            }
+        } while ($running);
+
+        \fclose($pipes[1]);
+        \fclose($pipes[2]);
+        \proc_close($process);
+
+        self::assertNotNull($markerExistedWhenSeen, 'The start line never appeared.' . $output);
+        self::assertFalse($markerExistedWhenSeen, 'Start line appeared after the Psalm process had already started.');
     }
 
     public function testDataSetFilterSelectsANestedFileByItsRelativePath(): void

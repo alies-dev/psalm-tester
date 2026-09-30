@@ -9,6 +9,7 @@ use AliesDev\PsalmTester\Outcome;
 use AliesDev\PsalmTester\Phpt;
 use AliesDev\PsalmTester\Result;
 use PHPUnit\Framework\AssertionFailedError;
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\ExpectationFailedException;
 use PHPUnit\Framework\IncompleteTestError;
 use PHPUnit\Framework\SkippedWithMessageException;
@@ -74,14 +75,22 @@ final class ResultTest extends TestCase
         self::assertSame('known limitation', $result->reason);
     }
 
-    public function testAnXPassedResultFailsWithARemoveXfailMessage(): void
+    #[TestWith(['/tests/foo.phpt', '/tests/foo.phpt'])]
+    #[TestWith(['', '(in-code test)'])]
+    public function testAnXPassedResultFailsWithARemoveXfailMessage(string $path, string $label): void
     {
-        $phpt = new Phpt(code: '<?php', expectation: Expectation::exact(''), xfail: 'known limitation', path: '/tests/foo.phpt');
+        $phpt = new Phpt(code: '<?php', expectation: Expectation::exact(''), xfail: 'known limitation', path: $path);
 
-        $this->expectException(AssertionFailedError::class);
-        $this->expectExceptionMessage('XPASS: /tests/foo.phpt now matches its expectation; remove --XFAIL-- (known limitation)');
-
-        (new Result($phpt, Outcome::XPassed, reason: 'known limitation'))->assert();
+        try {
+            (new Result($phpt, Outcome::XPassed, reason: 'known limitation'))->assert();
+            self::fail('Expected an AssertionFailedError.');
+        } catch (AssertionFailedError $e) {
+            // Exact class, not instanceof: IncompleteTestError and SkippedWithMessageException
+            // are themselves AssertionFailedError subclasses, so expectException() here would
+            // also accept assert() marking XPASS incomplete or skipped instead of failing it.
+            self::assertSame(AssertionFailedError::class, $e::class);
+            self::assertSame("XPASS: {$label} now matches its expectation; remove --XFAIL-- (known limitation)", $e->getMessage());
+        }
     }
 
     private static function phpt(Expectation $expectation, ?string $xfail = null): Phpt

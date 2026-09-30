@@ -17,14 +17,14 @@ final class SkipifEvaluator
      * @template TKey of array-key
      * @param array<TKey, string> $scriptsById
      * @param positive-int $concurrency
-     * @param ?array<string, string> $env
+     * @param array<string, string> $env
      * @return array<TKey, ?string>
      */
-    public static function evaluate(array $scriptsById, int $concurrency, string $temporaryDirectory, ?string $workingDirectory = null, ?array $env = null): array
+    public static function evaluate(array $scriptsById, int $concurrency, string $temporaryDirectory, ?string $workingDirectory, array $env): array
     {
         /** @var array<TKey, ?string> */
         $results = [];
-        /** @var array<TKey, array{command: non-empty-list<string>, env?: array<string, string>, cwd: ?string}> */
+        /** @var array<TKey, array{command: non-empty-list<string>, env: array<string, string>, cwd: ?string}> */
         $jobs = [];
         /** @var list<string> */
         $scriptFiles = [];
@@ -33,11 +33,7 @@ final class SkipifEvaluator
             foreach ($scriptsById as $id => $script) {
                 $scriptFile = self::writeScript($temporaryDirectory, $script, $id);
                 $scriptFiles[] = $scriptFile;
-                $jobs[$id] = ['command' => [\PHP_BINARY, $scriptFile], 'cwd' => $workingDirectory];
-
-                if ($env !== null) {
-                    $jobs[$id]['env'] = $env;
-                }
+                $jobs[$id] = ['command' => [\PHP_BINARY, $scriptFile], 'cwd' => $workingDirectory, 'env' => $env];
             }
 
             ProcessRunner::run(

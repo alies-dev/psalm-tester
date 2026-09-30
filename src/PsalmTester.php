@@ -10,7 +10,7 @@ use Composer\InstalledVersions;
  * Runs .phpt tests through Psalm. Configure with the with*() methods, each returning a copy.
  *
  * @api
- * @psalm-type Options = array{psalm: ?string, config: string, arguments: list<string>, timeout: ?float, concurrency: ?positive-int, workingDirectory: ?string, env: array<string, string>, progress: bool, temporaryDirectory: ?string, update: ?bool}
+ * @psalm-type Options = array{psalm: ?string, config: string, arguments: list<string>, timeout: ?float, concurrency: ?positive-int, workingDirectory: ?string, env: array<string, string>, temporaryDirectory: ?string}
  * @psalm-type GroupEntries = array<array-key, array{file: string, phpt: Phpt}>
  * @psalm-type Group = array{argv: list<string>, entries: GroupEntries}
  */
@@ -18,15 +18,13 @@ final readonly class PsalmTester
 {
     /**
      * @param Options $options
-     * @psalm-mutation-free
      */
     private function __construct(private array $options) {}
 
     /**
      * Defaults: the vimeo/psalm binary installed via Composer, the bundled psalm.xml,
-     * --no-progress --no-diff, no timeout, one process per CPU core, no progress output.
+     * --no-progress --no-diff, no timeout, one process per CPU core.
      *
-     * @psalm-pure
      */
     public static function create(): self
     {
@@ -38,15 +36,9 @@ final readonly class PsalmTester
             'concurrency' => null,
             'workingDirectory' => null,
             'env' => [],
-            // Off by default: under --process-isolation PHPUnit treats any child stderr as an error.
-            'progress' => false,
             'temporaryDirectory' => null,
-            // null: resolved from PSALM_TESTER_UPDATE at run() time, not here, so create() stays pure.
-            'update' => null,
         ]);
     }
-
-    /** @psalm-mutation-free */
     public function withPsalm(string $binary): self
     {
         return new self(['psalm' => $binary] + $this->options);
@@ -55,7 +47,6 @@ final readonly class PsalmTester
     /**
      * Passed as --config=, unless withArguments() or a test's --ARGS-- has a --config or -c.
      *
-     * @psalm-mutation-free
      */
     public function withConfig(string $psalmXml): self
     {
@@ -67,7 +58,6 @@ final readonly class PsalmTester
      * --no-progress --no-diff. A test's --ARGS-- are appended to them.
      *
      * @throws \InvalidArgumentException for -f or a path: the tester passes the files to analyze itself
-     * @psalm-mutation-free
      */
     public function withArguments(string ...$args): self
     {
@@ -81,7 +71,6 @@ final readonly class PsalmTester
      * Kills a Psalm run (with its process tree) still running $seconds after it started; its
      * tests get Outcome::Error. Null means no timeout.
      *
-     * @psalm-mutation-free
      */
     public function withTimeout(?float $seconds): self
     {
@@ -91,7 +80,6 @@ final readonly class PsalmTester
     /**
      * How many SKIPIF scripts, and separately how many Psalm runs, may run at once.
      *
-     * @psalm-mutation-free
      */
     public function withConcurrency(int $n): self
     {
@@ -105,7 +93,6 @@ final readonly class PsalmTester
     /**
      * Working directory of Psalm and SKIPIF processes; relative --config paths resolve against it.
      *
-     * @psalm-mutation-free
      */
     public function withWorkingDirectory(string $dir): self
     {
@@ -117,21 +104,10 @@ final readonly class PsalmTester
      * XDG_CACHE_HOME, TMPDIR, TMP and TEMP cannot be set for Psalm: each run gets its own.
      *
      * @param array<string, string> $env
-     * @psalm-mutation-free
      */
     public function withEnv(array $env): self
     {
         return new self(['env' => $env] + $this->options);
-    }
-
-    /**
-     * Whether to print one "<arguments>: <n> tests" line per Psalm run on STDERR (default off).
-     *
-     * @psalm-mutation-free
-     */
-    public function withProgress(bool $on): self
-    {
-        return new self(['progress' => $on] + $this->options);
     }
 
     /**
@@ -147,19 +123,6 @@ final readonly class PsalmTester
     }
 
     /**
-     * When on, run() rewrites a Failed test's --EXPECT-- section in place with its actual output
-     * and reports it as Outcome::Updated instead; never for --EXPECTF--, *_EXTERNAL or --XFAIL--
-     * tests (reported on STDERR as "not updated: <path> (<reason>)" instead). Default: the env
-     * var PSALM_TESTER_UPDATE ("1" or "true", case-insensitive).
-     *
-     * @psalm-mutation-free
-     */
-    public function withUpdate(bool $on): self
-    {
-        return new self(['update' => $on] + $this->options);
-    }
-
-    /**
      * Runs the tests: evaluates SKIPIF scripts concurrently, then analyzes the rest with one Psalm
      * run per distinct argument set (concurrently, bounded by withConcurrency()). Returns exactly
      * one Result per input key; a Psalm run that times out or whose output cannot be attributed
@@ -171,6 +134,33 @@ final readonly class PsalmTester
      * @return array<TKey, Result> in the order of $phpts
      */
     public function run(iterable $phpts): array
+    {
+        return $this->runPlanned($phpts, null);
+    }
+
+    /**
+     * @internal PsalmPhptTestCase's start line only: same as run(), but calls $onPlanned once
+     * SKIPIF evaluation and grouping are done and before any Psalm process starts, with the
+     * skipped count and the number of Psalm invocations about to run.
+     *
+     * @template TKey of array-key
+     * @param iterable<TKey, Phpt> $phpts keys must be unique
+     * @param callable(int, int): void $onPlanned
+     * @return array<TKey, Result> in the order of $phpts
+     */
+    public function runReportingPlan(iterable $phpts, callable $onPlanned): array
+    {
+        return $this->runPlanned($phpts, $onPlanned);
+    }
+
+    /**
+     * @template TKey of array-key
+     * @param iterable<TKey, Phpt> $phpts keys must be unique
+     * @param ?callable(int, int): void $onPlanned null for plain run(): the group count it would
+     *     otherwise need is skipped too, not just the call
+     * @return array<TKey, Result> in the order of $phpts
+     */
+    private function runPlanned(iterable $phpts, ?callable $onPlanned): array
     {
         $unique = [];
         foreach ($phpts as $id => $phpt) {
@@ -199,6 +189,10 @@ final readonly class PsalmTester
             }
         }
 
+        if ($onPlanned !== null) {
+            $onPlanned(\count($phpts) - \count($toAnalyze), $this->countGroups($toAnalyze));
+        }
+
         $analyzed = $toAnalyze === [] ? [] : $this->analyze($toAnalyze, $concurrency, $env, $temporaryDirectory);
 
         $results = [];
@@ -206,111 +200,27 @@ final readonly class PsalmTester
             $results[$id] = $analyzed[$id] ?? Result::skipped($phpt, $skipReasons[$id] ?? '');
         }
 
-        if ($this->options['update'] ?? self::envUpdateDefault()) {
-            /** @var array<string, string> $rewritten real path => output written in this run */
-            $rewritten = [];
-
-            foreach ($results as $id => $result) {
-                // XFailed is included so a mismatching --XFAIL-- test is reported "not updated"
-                // (with progress on) instead of silently skipped; XFailed is never itself rewritten.
-                if ($result->outcome === Outcome::Failed || $result->outcome === Outcome::XFailed) {
-                    $results[$id] = $this->applyUpdate($result, $rewritten);
-                }
-            }
-        }
-
         return $results;
     }
 
     /**
-     * @psalm-pure This reads an env var via getenv(), so it is not truly pure; the annotation is
-     *     required only because Psalm's impure-function list omits getenv() (like PhptParser's
-     *     file() call), so Psalm would otherwise report MissingPureAnnotation.
+     * @internal PsalmPhptTestCase's start line only: how many Psalm invocations run($phpts)
+     * would make, without running anything. Callers exclude SKIPIF-skipped tests themselves.
+     * @param iterable<array-key, Phpt> $phpts
      */
-    private static function envUpdateDefault(): bool
+    public function countGroups(iterable $phpts): int
     {
-        $value = \getenv('PSALM_TESTER_UPDATE');
+        $keys = [];
 
-        return $value !== false && \in_array(\strtolower(\trim($value)), ['1', 'true'], true);
-    }
-
-    /**
-     * Rewrites $result's file with its actual output and returns an Outcome::Updated result, or
-     * the Failed result with "not updated: <path> (<why>)" as reason, which assert() shows. A
-     * rewrite failure affects only that file. The same line goes to STDERR only with
-     * withProgress(true): any stderr fails a --process-isolation test.
-     *
-     * @param array<string, string> $rewritten real path => output already written in this run
-     * @param-out array<string, string> $rewritten
-     */
-    private function applyUpdate(Result $result, array &$rewritten): Result
-    {
-        $phpt = $result->phpt;
-        $why = self::updateIneligibleReason($phpt);
-
-        if ($why === null) {
+        foreach ($phpts as $phpt) {
             try {
-                // The same file twice in one run (e.g. under two keys): write it once; the second
-                // would otherwise see its own earlier rewrite as a change during the run.
-                $realPath = \realpath($phpt->path);
-                $earlier = $realPath === false ? null : ($rewritten[$realPath] ?? null);
-
-                if ($earlier === null) {
-                    PhptRewriter::rewriteExpect($phpt->path, $result->output, $phpt->sourceHash);
-                    if ($realPath !== false) {
-                        $rewritten[$realPath] = $result->output;
-                    }
-                } elseif ($earlier !== $result->output) {
-                    throw new \RuntimeException('rewritten earlier in this run with a different output');
-                }
-
-                $updated = new Result($phpt, Outcome::Updated, $result->output, $result->issues, \sprintf('updated: %s', $phpt->path));
-                $this->report((string) $updated->reason);
-
-                return $updated;
-            } catch (\RuntimeException|\LogicException $e) {
-                $why = $e->getMessage();
+                $keys[self::groupKey($phpt, $this->effectiveArguments($phpt))] = true;
+            } catch (\InvalidArgumentException) {
+                // Invalid --ARGS--: run() gives it its own error result, no Psalm process for it.
             }
         }
 
-        $notUpdated = \sprintf('not updated: %s (%s)', $phpt->path !== '' ? $phpt->path : '(in-code test)', $why);
-        $this->report($notUpdated);
-
-        // An XFailed result keeps its --XFAIL-- reason: that is what markTestIncomplete() shows.
-        return $result->outcome === Outcome::Failed
-            ? new Result($phpt, Outcome::Failed, $result->output, $result->issues, $notUpdated)
-            : $result;
-    }
-
-    private function report(string $line): void
-    {
-        if ($this->options['progress']) {
-            \fwrite(\STDERR, $line . "\n");
-        }
-    }
-
-    /**
-     * @psalm-mutation-free
-     */
-    private static function updateIneligibleReason(Phpt $phpt): ?string
-    {
-        if ($phpt->xfail !== null) {
-            return 'has --XFAIL--';
-        }
-
-        if ($phpt->expectation->kind === ExpectationKind::Format) {
-            return $phpt->expectation->externalPath !== null ? 'EXPECTF_EXTERNAL cannot be rewritten' : 'EXPECTF cannot be rewritten';
-        }
-
-        if ($phpt->expectation->externalPath !== null) {
-            return 'EXPECT_EXTERNAL cannot be rewritten';
-        }
-
-        if ($phpt->path === '') {
-            return 'no source file to rewrite';
-        }
-
-        return null;
+        return \count($keys);
     }
 
     public function runOne(Phpt $phpt): Result
@@ -349,12 +259,12 @@ final readonly class PsalmTester
 
                 $file = self::createTemporaryCodeFile($temporaryDirectory, $phpt->code);
                 $tempFiles[] = $file;
-                $key = \implode("\0", $argv);
+                $key = self::groupKey($phpt, $argv);
                 $groups[$key]['argv'] = $argv;
                 $groups[$key]['entries'][$id] = ['file' => $file, 'phpt' => $phpt];
             }
 
-            /** @var array<string, array{command: non-empty-list<string>, env: array<string, string>, cwd: ?string}> */
+            /** @var array<string, array{command: non-empty-list<string>, env: array<string, string>, cwd: ?string, conflicts: list<string>}> */
             $jobs = [];
 
             foreach ($groups as $key => $group) {
@@ -364,10 +274,17 @@ final readonly class PsalmTester
                 // sys_get_temp_dir() (e.g. psalm-plugin-laravel's Plugin::getCacheLocation()).
                 $cacheDir = self::createGroupCacheDir($temporaryDirectory);
                 $cacheDirs[] = $cacheDir;
+                $conflicts = [];
+
+                foreach ($group['entries'] as $entry) {
+                    $conflicts = [...$conflicts, ...$entry['phpt']->conflicts];
+                }
+
                 $jobs[$key] = [
                     'command' => self::buildCommand($psalm, $group),
                     'env' => ['XDG_CACHE_HOME' => $cacheDir, 'TMPDIR' => $cacheDir, 'TMP' => $cacheDir, 'TEMP' => $cacheDir] + $env,
                     'cwd' => $this->options['workingDirectory'],
+                    'conflicts' => $conflicts,
                 ];
             }
 
@@ -382,11 +299,6 @@ final readonly class PsalmTester
                     foreach ($this->groupResults($group, $args, $output, $exitCode, $signal) as $id => $result) {
                         /** @var TKey $id */
                         $results[$id] = $result;
-                    }
-
-                    if ($this->options['progress']) {
-                        $count = \count($group['entries']);
-                        \fwrite(\STDERR, \sprintf("%s: %d %s\n", $args, $count, $count === 1 ? 'test' : 'tests'));
                     }
                 },
                 $this->options['timeout'],
@@ -468,7 +380,6 @@ final readonly class PsalmTester
      * one), so Psalm never sees two --config options ("Too many config files provided").
      *
      * @return list<string>
-     * @psalm-mutation-free
      */
     private function effectiveArguments(Phpt $phpt): array
     {
@@ -486,6 +397,41 @@ final readonly class PsalmTester
     }
 
     /**
+     * Sorted, so argument order alone never splits one group into two, unless a token takes a
+     * separate value (--config x, -c x, --root x, -r x, --printer x): moving such a token away
+     * from the value after it would change what Psalm sees, so the original order is kept as is.
+     * Duplicates are never removed either way.
+     *
+     * @param list<string> $args
+     * @return list<string>
+     */
+    private static function groupKeyTokens(array $args): array
+    {
+        if (\array_intersect($args, ['--config', '--root', '--printer', '-c', '-r']) !== []) {
+            return $args;
+        }
+
+        \sort($args, \SORT_STRING);
+
+        return $args;
+    }
+
+    /**
+     * The Psalm-run group key for $phpt: run() and countGroups() both build it through here, so
+     * they cannot drift apart again. --CONFLICTS--: never co-analyzed with another test,
+     * conflicting or not, so it gets a key nothing else can share, regardless of matching
+     * arguments; spl_object_id() is unique per Phpt instance for exactly that purpose.
+     *
+     * @param list<string> $argv
+     */
+    private static function groupKey(Phpt $phpt, array $argv): string
+    {
+        $key = \implode("\0", self::groupKeyTokens($argv));
+
+        return $phpt->conflicts === [] ? $key : $key . "\0conflicts:" . \spl_object_id($phpt);
+    }
+
+    /**
      * Rejects what would change which files Psalm analyzes: -f (alone or clustered, e.g. -mf) and
      * anything Psalm's CliUtils::getPathsToCheck() (Psalm 6 and 7) reads as a path, i.e. a word
      * that is not the value of -c, -r, --config, --printer or --root ("-" means stdin). Psalm
@@ -493,7 +439,6 @@ final readonly class PsalmTester
      *
      * @param list<string> $args
      * @throws \InvalidArgumentException
-     * @psalm-pure
      */
     private static function assertNoAnalysisTargets(array $args): void
     {
@@ -532,7 +477,6 @@ final readonly class PsalmTester
 
     /**
      * @param list<string> $args
-     * @psalm-pure
      */
     private static function hasConfigOption(array $args): bool
     {
@@ -548,7 +492,6 @@ final readonly class PsalmTester
     /**
      * @param list<string> $args
      * @return list<string>
-     * @psalm-pure
      */
     private static function stripConfigOption(array $args): array
     {
@@ -615,10 +558,6 @@ final readonly class PsalmTester
 
     private static function findPsalm(): string
     {
-        if (!method_exists(InstalledVersions::class, 'getInstallPath')) {
-            throw new \RuntimeException('Cannot find Psalm installation path. Pass it to withPsalm().');
-        }
-
         $installPath = InstalledVersions::getInstallPath('vimeo/psalm');
 
         if ($installPath === null) {
@@ -652,20 +591,16 @@ final readonly class PsalmTester
 
     private static function removeDirectoryRecursive(string $dir): void
     {
-        if (!\is_dir($dir)) {
-            return;
-        }
-
         // Best-effort cleanup: this runs from analyze()'s finally, so an iterator
         // failure here must not mask the original exception.
         try {
+            /** @var \Iterator<array-key, \SplFileInfo> */
             $iterator = new \RecursiveIteratorIterator(
                 new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
                 \RecursiveIteratorIterator::CHILD_FIRST,
             );
 
             foreach ($iterator as $entry) {
-                /** @var \SplFileInfo $entry */
                 if ($entry->isDir() && !$entry->isLink()) {
                     @\rmdir($entry->getPathname());
                 } else {
