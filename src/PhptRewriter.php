@@ -15,16 +15,23 @@ namespace AliesDev\PsalmTester;
 final class PhptRewriter
 {
     /**
+     * A symlink is followed: its target is rewritten and the link stays a link.
+     *
+     * @param ?string $sourceHash sha1 of the bytes the test was parsed from; a file that no longer
+     *     matches it (edited during the run) is not rewritten
      * @throws \RuntimeException|\InvalidArgumentException|\LogicException when the file cannot be
      *     rewritten safely; it is then left untouched
      */
-    public static function rewriteExpect(string $path, string $actualOutput): void
+    public static function rewriteExpect(string $path, string $actualOutput, ?string $sourceHash): void
     {
-        $raw = @\file_get_contents($path);
+        $target = \realpath($path);
+        $raw = $target === false ? false : @\file_get_contents($target);
 
-        if ($raw === false) {
+        if ($target === false || $raw === false) {
             throw new \RuntimeException(\sprintf('Failed to read file %s.', $path));
         }
+
+        $sourceHash ??= \sha1($raw);
 
         ['lines' => $lines, 'sections' => $sections] = PhptParser::scan($raw, $path);
 
@@ -57,7 +64,7 @@ final class PhptRewriter
         }
 
         $rewritten = \implode('', \array_slice($lines, 0, $start - 1)) . $header . $body . \implode('', \array_slice($lines, $end));
-        self::writeAtomically($path, $rewritten);
+        self::writeAtomically($target, $rewritten, $sourceHash);
     }
 
     /**
@@ -76,7 +83,7 @@ final class PhptRewriter
      * Writes a temp file next to $path and renames it over $path, so a failure never leaves a
      * half-written test behind; the original permissions are kept.
      */
-    private static function writeAtomically(string $path, string $contents): void
+    private static function writeAtomically(string $path, string $contents, string $sourceHash): void
     {
         $temp = \tempnam(\dirname($path), '.psalm-tester-');
 
@@ -88,8 +95,17 @@ final class PhptRewriter
             $permissions = \fileperms($path);
 
             if (\file_put_contents($temp, $contents) === false
-                || ($permissions !== false && !\chmod($temp, $permissions & 0o7777))
-                || !\rename($temp, $path)) {
+                || ($permissions !== false && !\chmod($temp, $permissions & 0o7777))) {
+                throw new \RuntimeException(\sprintf('Failed to write file %s.', $path));
+            }
+
+            // Checked right before the rename, which narrows the window for an editor save; a
+            // mismatch also means the analyzed code is not what the file now holds.
+            if (\sha1((string) @\file_get_contents($path)) !== $sourceHash) {
+                throw new \RuntimeException('changed during the run');
+            }
+
+            if (!\rename($temp, $path)) {
                 throw new \RuntimeException(\sprintf('Failed to write file %s.', $path));
             }
         } finally {

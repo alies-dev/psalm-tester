@@ -19,15 +19,16 @@ final class ProcessRunner
     private const POLL_INTERVAL_MICROSECONDS = 5_000;
 
     /**
-     * Calls $onComplete(id, stdout) as each job exits, in completion order; stdout is null for a
-     * job killed (with its whole process tree) after running $timeoutSeconds. If anything throws
+     * Calls $onComplete(id, stdout, exit code, terminating signal or null) as each job exits, in
+     * completion order; stdout is null (exit code -1) for a job killed with its whole process tree
+     * after running $timeoutSeconds. If anything throws
      * (a failed start, or $onComplete itself), every still-running child is killed and its
      * temporary file removed before the exception propagates.
      *
      * @template TKey of array-key
      * @param array<TKey, Job> $jobs
      * @param positive-int $concurrency
-     * @param callable(TKey, ?string): void $onComplete
+     * @param callable(TKey, ?string, int, ?int): void $onComplete
      */
     public static function run(array $jobs, int $concurrency, string $temporaryDirectory, callable $onComplete, ?float $timeoutSeconds = null): void
     {
@@ -45,13 +46,16 @@ final class ProcessRunner
                 }
 
                 foreach ($live as $id => $proc) {
-                    if (\proc_get_status($proc['process'])['running']) {
+                    // Only the first status call after exit reports the real exit code.
+                    $status = \proc_get_status($proc['process']);
+
+                    if ($status['running']) {
                         if ($timeoutSeconds !== null && \microtime(true) - $proc['startedAt'] >= $timeoutSeconds) {
                             self::kill($proc['process']);
                             \proc_close($proc['process']);
                             unset($live[$id]);
                             @\unlink($proc['stdoutFile']);
-                            $onComplete($id, null);
+                            $onComplete($id, null, -1, 9);
                         }
 
                         continue;
@@ -60,7 +64,7 @@ final class ProcessRunner
                     // Only reaped once exit is confirmed, so proc_close() never blocks here.
                     \proc_close($proc['process']);
                     unset($live[$id]);
-                    $onComplete($id, self::takeOutput($proc['stdoutFile']));
+                    $onComplete($id, self::takeOutput($proc['stdoutFile']), $status['exitcode'], $status['signaled'] ? $status['termsig'] : null);
                 }
 
                 if ($live !== []) {
