@@ -11,6 +11,11 @@ if ($sleep > 0) {
     \usleep((int) ($sleep * 1_000_000));
 }
 
+$stderr = (string) \getenv('STUB_STDERR');
+if ($stderr !== '') {
+    \fwrite(\STDERR, $stderr);
+}
+
 $mode = (string) (\getenv('STUB_MODE') ?: 'per_file');
 
 if ($mode === 'invalid_json') {
@@ -58,6 +63,17 @@ if ($mode === 'large') {
                 'file_path' => $file,
             ];
         }
+    }
+} elseif ($mode === 'echo_code') {
+    // The message is the file's own code minus the open tag, so each id's output is distinct.
+    foreach ($files as $file) {
+        $errors[] = [
+            'type' => 'StubError',
+            'line_from' => 1,
+            'column_from' => 1,
+            'message' => \trim(\str_replace('<?php', '', (string) \file_get_contents($file))),
+            'file_path' => $file,
+        ];
     }
 } else {
     foreach ($files as $file) {

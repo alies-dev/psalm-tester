@@ -21,6 +21,71 @@ final class PsalmTesterBatchTest extends TestCase
         \putenv('STUB_ENV_LOG_DIR');
     }
 
+    public function testRunBatchRoutesEachFilesErrorsToItsOwnId(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_MODE=echo_code');
+
+        // Interleaved across two argument groups, so group order differs from input order.
+        $results = $tester->runBatch([
+            'a' => new PsalmTest(code: '<?php // alpha', constraint: new IsIdentical('')),
+            'b' => new PsalmTest(code: '<?php // beta', constraint: new IsIdentical(''), arguments: '--config=other'),
+            'c' => new PsalmTest(code: '<?php // gamma', constraint: new IsIdentical('')),
+            'd' => new PsalmTest(code: '<?php // delta', constraint: new IsIdentical(''), arguments: '--config=other'),
+        ]);
+
+        self::assertSame([
+            'a' => 'StubError on line 1: // alpha',
+            'b' => 'StubError on line 1: // beta',
+            'c' => 'StubError on line 1: // gamma',
+            'd' => 'StubError on line 1: // delta',
+        ], $results);
+    }
+
+    public function testRunBatchShiftsReportedLinesByCodeFirstLine(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_MODE=echo_code');
+
+        $results = $tester->runBatch([
+            'shifted' => new PsalmTest(code: '<?php // shifted', constraint: new IsIdentical(''), codeFirstLine: 7),
+            'plain' => new PsalmTest(code: '<?php // plain', constraint: new IsIdentical('')),
+        ]);
+
+        self::assertSame(['shifted' => 'StubError on line 7: // shifted', 'plain' => 'StubError on line 1: // plain'], $results);
+    }
+
+    public function testRunBatchAndTestPassPsalmStderrThrough(): void
+    {
+        $script = <<<'PHP'
+            require $argv[1];
+            $tester = AliesDev\PsalmTester\PsalmTester::create(psalmPath: $argv[2], showProgress: false);
+            $test = new AliesDev\PsalmTester\PsalmTest(
+                code: '<?php',
+                constraint: new PHPUnit\Framework\Constraint\StringMatchesFormatDescription('%A'),
+            );
+            $tester->runBatch(['x' => $test]);
+            $tester->test($test);
+            PHP;
+        $env = \getenv();
+        $env['STUB_STDERR'] = '[stub-stderr-marker]';
+        $pipes = [];
+        $process = \proc_open(
+            [\PHP_BINARY, '-r', $script, \dirname(__DIR__) . '/vendor/autoload.php', self::STUB_PATH],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            $env,
+        );
+        self::assertIsResource($process);
+        \fclose($pipes[1]);
+        $stderr = (string) \stream_get_contents($pipes[2]);
+        \fclose($pipes[2]);
+
+        self::assertSame(0, \proc_close($process), $stderr);
+        self::assertSame(2, \substr_count($stderr, '[stub-stderr-marker]'), $stderr);
+    }
+
     public function testRunBatchPreservesInputOrderAndDistributesErrorsAcrossGroups(): void
     {
         $tester = self::createTester();
