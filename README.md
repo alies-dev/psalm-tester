@@ -203,4 +203,11 @@ final class MyPsalmTest extends TestCase
 > Ensure that class and function names are unique across `.phpt` files within the same argument group,
 > otherwise Psalm will report `DuplicateClass` / `DuplicateFunction` errors.
 
-See the source code in `PsalmTester::runBatch()` and related helper methods for implementation details. Groups run concurrently via `proc_open()`, so total wall time is bounded by the slowest group rather than the sum of all groups.
+See the source code in `PsalmTester::runBatch()` and related helper methods for implementation details. Groups run
+concurrently, up to one per CPU core by default (`PsalmTester::create(concurrency: 4)` changes that); the rest wait for a
+free slot. If one group fails (e.g. Psalm prints invalid JSON), the exception surfaces immediately and still-running
+groups are killed.
+
+Each group runs with its own empty cache directory (`XDG_CACHE_HOME`, `TMPDIR`, `TMP` and `TEMP` point at it) and with
+`--no-cache` appended unless its arguments already contain it: the cache would be thrown away after the run, and
+writing it roughly doubled the wall time of a 700 file suite.
