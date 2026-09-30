@@ -208,6 +208,7 @@ final class PsalmTesterRunTest extends TestCase
         yield 'quoted ARGS config options count' => [[], '"-c" \'strict  config.xml\'', ['-c', 'strict  config.xml']];
         yield 'a --config inside another value does not' => [[], '--report="prefix --config=x.json"', [$configured, '--report=prefix --config=x.json']];
         yield 'a config in withArguments() replaces it' => [['--config=/from-arguments.xml'], '--extra', ['--config=/from-arguments.xml', '--extra']];
+        yield 'ARGS --config also replaces one from withArguments(), not just the default' => [['--config=A'], '--config=B', ['--config=B']];
     }
 
     /**
