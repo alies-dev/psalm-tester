@@ -7,7 +7,7 @@ declare(strict_types=1);
 // entries that exist on disk. Behavior comes from the environment (STUB_*), which is shared by
 // every group of a batch, or per invocation from --stub-* arguments in a group's argument string:
 //   --stub-sleep=<seconds>    overrides STUB_SLEEP
-//   --stub-mode=<mode>        overrides STUB_MODE
+//   --stub-mode=<mode>        overrides STUB_MODE (empty: no issues at all)
 //   --stub-await-pids=<n>     first wait until STUB_PID_DIR holds <n> pid files
 // STUB_PID_DIR: each invocation writes its pid there. STUB_STDERR: text written to stderr.
 // STUB_STDERR_BYTES: that many bytes written to stderr. STUB_POPULATE_CACHE: nested files
@@ -51,6 +51,11 @@ if ($stderr !== '') {
 }
 
 $mode = (string) ($options['mode'] ?? (\getenv('STUB_MODE') ?: 'per_file'));
+
+if ($mode === 'empty') {
+    \fwrite(\STDOUT, '[]');
+    exit(0);
+}
 
 if ($mode === 'invalid_json') {
     \fwrite(\STDOUT, 'NOT JSON');

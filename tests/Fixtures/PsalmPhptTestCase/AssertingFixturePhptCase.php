@@ -1,0 +1,26 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AliesDev\PsalmTester\Tests\Fixtures\PsalmPhptTestCase;
+
+use AliesDev\PsalmTester\PsalmPhptTestCase;
+use AliesDev\PsalmTester\PsalmTester;
+
+/**
+ * Like FixturePhptCase, over files whose expectations compare non-empty stub output.
+ */
+final class AssertingFixturePhptCase extends PsalmPhptTestCase
+{
+    #[\Override]
+    protected static function phptDirectory(): string
+    {
+        return __DIR__ . '/asserting';
+    }
+
+    #[\Override]
+    protected static function tester(): PsalmTester
+    {
+        return PsalmTester::create()->withPsalm(\dirname(__DIR__, 2) . '/bin/psalm-stub')->withProgress(false);
+    }
+}

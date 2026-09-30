@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace AliesDev\PsalmTester\Tests;
 
-use AliesDev\PsalmTester\PsalmTest;
-use PHPUnit\Framework\Constraint\IsIdentical;
-use PHPUnit\Framework\Constraint\StringMatchesFormatDescription;
+use AliesDev\PsalmTester\Expectation;
+use AliesDev\PsalmTester\ExpectationKind;
+use AliesDev\PsalmTester\Outcome;
+use AliesDev\PsalmTester\Phpt;
+use AliesDev\PsalmTester\PsalmTester;
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 
-final class PsalmTestParsingTest extends TestCase
+final class PhptParsingTest extends TestCase
 {
     /** @var list<string> */
     private array $tempFiles = [];
@@ -22,9 +25,9 @@ final class PsalmTestParsingTest extends TestCase
         $this->tempFiles = [];
     }
 
-    public function testFromPhptFileParsesFileAndExpectSections(): void
+    public function testFromFileParsesFileAndExpectSections(): void
     {
-        $test = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        $test = Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --FILE--
                 <?php
                 $x = 1;
@@ -34,12 +37,12 @@ final class PsalmTestParsingTest extends TestCase
 
         self::assertSame("<?php\n\$x = 1;", $test->code);
         self::assertSame('', $test->arguments);
-        self::assertEquals(new IsIdentical('no errors'), $test->constraint);
+        self::assertEquals(Expectation::exact('no errors'), $test->expectation);
     }
 
-    public function testFromPhptFileCapturesArgsSection(): void
+    public function testFromFileCapturesArgsSection(): void
     {
-        $test = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        $test = Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --ARGS--
                 --no-cache
                 --FILE--
@@ -50,9 +53,9 @@ final class PsalmTestParsingTest extends TestCase
         self::assertSame('--no-cache', $test->arguments);
     }
 
-    public function testFromPhptFileCodeFirstLineTracksFileSectionOffset(): void
+    public function testFromFileCodeFirstLineTracksFileSectionOffset(): void
     {
-        $test = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        $test = Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --SKIPIF--
                 <?php
                 --ARGS--
@@ -67,50 +70,50 @@ final class PsalmTestParsingTest extends TestCase
         self::assertSame(6, $test->codeFirstLine);
     }
 
-    public function testFromPhptFileWithExpectfUsesFormatDescriptionConstraint(): void
+    public function testFromFileWithExpectfUsesFormatDescriptionConstraint(): void
     {
-        $test = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        $test = Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --FILE--
                 <?php
                 --EXPECTF--
                 Trace on line %d: %s
                 PHPT));
 
-        self::assertEquals(new StringMatchesFormatDescription("Trace on line %d: %s"), $test->constraint);
+        self::assertEquals(Expectation::format("Trace on line %d: %s"), $test->expectation);
     }
 
-    public function testFromPhptFileWithExpectExternalReadsReferencedFile(): void
+    public function testFromFileWithExpectExternalReadsReferencedFile(): void
     {
         $externalFile = $this->writeTempFile('expected external output');
-        $test = PsalmTest::fromPhptFile($this->writePhpt(<<<PHPT
+        $test = Phpt::fromFile($this->writePhpt(<<<PHPT
                 --FILE--
                 <?php
                 --EXPECT_EXTERNAL--
                 {$externalFile}
                 PHPT));
 
-        self::assertEquals(new IsIdentical('expected external output'), $test->constraint);
+        self::assertEquals(new Expectation(ExpectationKind::Exact, 'expected external output', $externalFile), $test->expectation);
     }
 
-    public function testFromPhptFileWithExpectfExternalReadsReferencedFile(): void
+    public function testFromFileWithExpectfExternalReadsReferencedFile(): void
     {
         $externalFile = $this->writeTempFile('Trace on line %d: %s');
-        $test = PsalmTest::fromPhptFile($this->writePhpt(<<<PHPT
+        $test = Phpt::fromFile($this->writePhpt(<<<PHPT
                 --FILE--
                 <?php
                 --EXPECTF_EXTERNAL--
                 {$externalFile}
                 PHPT));
 
-        self::assertEquals(new StringMatchesFormatDescription('Trace on line %d: %s'), $test->constraint);
+        self::assertEquals(new Expectation(ExpectationKind::Format, 'Trace on line %d: %s', $externalFile), $test->expectation);
     }
 
-    public function testFromPhptFileRejectsUnsupportedSection(): void
+    public function testFromFileRejectsUnsupportedSection(): void
     {
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessageMatches('/BOGUS/');
 
-        PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --BOGUS--
                 whatever
                 --FILE--
@@ -119,34 +122,34 @@ final class PsalmTestParsingTest extends TestCase
                 PHPT));
     }
 
-    public function testFromPhptFileRequiresFileSection(): void
+    public function testFromFileRequiresFileSection(): void
     {
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessageMatches('/FILE section/');
 
-        PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --EXPECT--
                 no errors
                 PHPT));
     }
 
-    public function testFromPhptFileRequiresAnExpectSection(): void
+    public function testFromFileRequiresAnExpectSection(): void
     {
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessageMatches('/EXPECT\* section/');
 
-        PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --FILE--
                 <?php
                 PHPT));
     }
 
-    public function testFromPhptFileRequiresSectionDelimiterFirst(): void
+    public function testFromFileRequiresSectionDelimiterFirst(): void
     {
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessageMatches('/section delimiter/');
 
-        PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 not a section header
                 --FILE--
                 <?php
@@ -154,26 +157,45 @@ final class PsalmTestParsingTest extends TestCase
                 PHPT));
     }
 
-    public function testFromPhptFileCapturesTheSkipifScriptFromTheSameParse(): void
+    public function testFromFileCapturesTheSkipifScriptFromTheSameParse(): void
     {
-        $withSkipif = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        $withSkipif = Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --SKIPIF--
                 <?php echo 'skip not today';
                 --FILE--
                 <?php
                 --EXPECT--
                 PHPT));
-        $withoutSkipif = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+        $withoutSkipif = Phpt::fromFile($this->writePhpt(<<<'PHPT'
                 --FILE--
                 <?php
                 --EXPECT--
                 PHPT));
 
-        self::assertSame("<?php echo 'skip not today';", $withSkipif->skipifScript);
-        self::assertNull($withoutSkipif->skipifScript);
+        self::assertSame("<?php echo 'skip not today';", $withSkipif->skipif);
+        self::assertNull($withoutSkipif->skipif);
     }
 
-    public function testGetSkipReasonsForTestsEvaluatesTheCarriedScriptWithoutRereadingTheFile(): void
+    #[TestWith(['CLEAN'])]
+    #[TestWith(['ENV'])]
+    #[TestWith(['INI'])]
+    public function testFromFileRejectsRunTestsSectionsItDoesNotImplement(string $section): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches(\sprintf('/Section --%s-- in .* is not supported by psalm-tester/', $section));
+
+        Phpt::fromFile($this->writePhpt("--FILE--\n<?php\n--{$section}--\nx\n--EXPECT--\n"));
+    }
+
+    public function testFromFileRecordsThePath(): void
+    {
+        $file = $this->writePhpt("--FILE--\n<?php\n--EXPECT--\n");
+
+        self::assertSame($file, Phpt::fromFile($file)->path);
+        self::assertNull(Phpt::fromFile($file)->xfail);
+    }
+
+    public function testRunEvaluatesTheCarriedSkipifScriptWithoutRereadingTheFile(): void
     {
         $file = $this->writePhpt(<<<'PHPT'
                 --SKIPIF--
@@ -182,15 +204,16 @@ final class PsalmTestParsingTest extends TestCase
                 <?php
                 --EXPECT--
                 PHPT);
-        $test = PsalmTest::fromPhptFile($file);
+        $test = Phpt::fromFile($file);
 
-        // If getSkipReasonsForTests() re-parsed the file instead of reusing $test->skipifScript
-        // (captured above, from fromPhptFile()'s one parse), this would have nothing to read.
+        // If run() re-parsed the file instead of reusing $test->skipif (captured above, from
+        // fromFile()'s one parse), this would have nothing to read.
         \unlink($file);
 
-        $reasons = PsalmTest::getSkipReasonsForTests(['t' => $test]);
+        $result = PsalmTester::create()->withPsalm(__DIR__ . '/bin/psalm-stub')->withProgress(false)->runOne($test);
 
-        self::assertSame('stale by now', $reasons['t']);
+        self::assertSame(Outcome::Skipped, $result->outcome);
+        self::assertSame('stale by now', $result->reason);
     }
 
     private function writePhpt(string $contents): string

@@ -4,27 +4,25 @@ declare(strict_types=1);
 
 namespace AliesDev\PsalmTester;
 
-use PHPUnit\Framework\Assert;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\TestSuite;
 
 /**
- * Runs every *.phpt file under baseDir() (recursively) as one data-provider test, keyed by its
- * path relative to baseDir(). Before the first test, the files PHPUnit will actually run (after
- * --filter and friends) get their --SKIPIF-- sections evaluated concurrently and are analyzed in a
- * single PsalmTester::runBatch() call.
+ * Runs every *.phpt file under phptDirectory() (recursively) as one data set of testPhpt(), named
+ * by its path relative to phptDirectory(). Before the first test, the files PHPUnit will actually
+ * run (after --filter and friends) are passed to one PsalmTester::run() call.
  *
  * @api
  */
-abstract class PhptTestCase extends TestCase
+abstract class PsalmPhptTestCase extends TestCase
 {
-    private const EMPTY_STATE = ['tests' => [], 'skipReasons' => [], 'results' => [], 'errors' => []];
+    private const EMPTY_STATE = ['results' => [], 'errors' => []];
 
     /**
      * Keyed by concrete class: static properties are shared by every subclass of this base.
      *
-     * @var array<string, array{tests: array<string, PsalmTest>, skipReasons: array<string, string>, results: array<string, string>, errors: array<string, \Throwable>}>
+     * @var array<string, array{results: array<string, Result>, errors: array<string, \Throwable>}>
      */
     private static array $state = [];
 
@@ -33,12 +31,14 @@ abstract class PhptTestCase extends TestCase
      *
      * @psalm-external-mutation-free
      */
-    abstract protected static function baseDir(): string;
+    abstract protected static function phptDirectory(): string;
 
     /**
-     * Override to configure the tester (Psalm path, default arguments, timeout, ...).
+     * Override to configure the tester (config, arguments, timeout, ...).
+     *
+     * @psalm-pure
      */
-    protected static function createTester(): PsalmTester
+    protected static function tester(): PsalmTester
     {
         return PsalmTester::create();
     }
@@ -64,7 +64,7 @@ abstract class PhptTestCase extends TestCase
     /**
      * @return iterable<string, array{string}>
      */
-    public static function providePhptFiles(): iterable
+    final public static function phptFiles(): iterable
     {
         foreach (self::discoverPhptFiles() as $relPath) {
             yield $relPath => [$relPath];
@@ -74,12 +74,12 @@ abstract class PhptTestCase extends TestCase
     /**
      * @throws \Throwable the error that made this file unusable, if any
      */
-    #[DataProvider('providePhptFiles')]
+    #[DataProvider('phptFiles')]
     final public function testPhpt(string $relPath): void
     {
         $state = self::$state[static::class] ?? self::EMPTY_STATE;
 
-        if (!isset($state['tests'][$relPath]) && !isset($state['skipReasons'][$relPath]) && !isset($state['errors'][$relPath])) {
+        if (!isset($state['results'][$relPath]) && !isset($state['errors'][$relPath])) {
             self::$state[static::class] = $state;
             self::prepare([$relPath]);
             $state = self::$state[static::class];
@@ -89,47 +89,33 @@ abstract class PhptTestCase extends TestCase
             throw $state['errors'][$relPath];
         }
 
-        if (isset($state['skipReasons'][$relPath])) {
-            $this->markTestSkipped($state['skipReasons'][$relPath]);
-        }
-
-        Assert::assertThat($state['results'][$relPath] ?? '', $state['tests'][$relPath]->constraint);
+        $state['results'][$relPath]->assert();
     }
 
     /**
-     * Parses, SKIPIF-checks and analyzes the given files, merging the outcome into this class's state.
+     * Parses and runs the given files, merging the outcome into this class's state.
      *
      * @param list<string> $relPaths
      */
     private static function prepare(array $relPaths): void
     {
         $state = self::$state[static::class];
-        $baseDir = self::resolveBaseDir();
-        $tests = [];
+        $directory = self::resolvePhptDirectory();
+        $phpts = [];
 
         foreach ($relPaths as $relPath) {
             try {
-                $tests[$relPath] = PsalmTest::fromPhptFile($baseDir . '/' . $relPath);
+                $phpts[$relPath] = Phpt::fromFile($directory . '/' . $relPath);
             } catch (\Throwable $e) {
                 // Reported by that file's own test, instead of erroring every test of the class.
                 $state['errors'][$relPath] = $e;
             }
         }
 
-        foreach (PsalmTest::getSkipReasonsForTests($tests) as $relPath => $reason) {
-            if ($reason !== null) {
-                $state['skipReasons'][(string) $relPath] = $reason;
-                unset($tests[(string) $relPath]);
-            }
+        if ($phpts !== []) {
+            $state['results'] = static::tester()->run($phpts) + $state['results'];
         }
 
-        if ($tests !== []) {
-            foreach (static::createTester()->runBatch($tests) as $relPath => $output) {
-                $state['results'][(string) $relPath] = $output;
-            }
-        }
-
-        $state['tests'] += $tests;
         self::$state[static::class] = $state;
     }
 
@@ -180,18 +166,18 @@ abstract class PhptTestCase extends TestCase
     }
 
     /**
-     * @return list<string> paths relative to baseDir(), always "/"-separated, sorted
+     * @return list<string> paths relative to phptDirectory(), always "/"-separated, sorted
      */
     private static function discoverPhptFiles(): array
     {
-        $baseDir = self::resolveBaseDir();
+        $directory = self::resolvePhptDirectory();
         $files = [];
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($baseDir, \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS));
 
         /** @var \SplFileInfo $file */
         foreach ($iterator as $file) {
             if ($file->isFile() && $file->getExtension() === 'phpt') {
-                $files[] = \str_replace(\DIRECTORY_SEPARATOR, '/', \substr($file->getPathname(), \strlen($baseDir) + 1));
+                $files[] = \str_replace(\DIRECTORY_SEPARATOR, '/', \substr($file->getPathname(), \strlen($directory) + 1));
             }
         }
 
@@ -200,14 +186,14 @@ abstract class PhptTestCase extends TestCase
         return $files;
     }
 
-    private static function resolveBaseDir(): string
+    private static function resolvePhptDirectory(): string
     {
-        $baseDir = \rtrim(static::baseDir(), '/\\');
+        $directory = \rtrim(static::phptDirectory(), '/\\');
 
-        if (!\is_dir($baseDir)) {
-            throw new \LogicException(\sprintf('%s::baseDir() must return an existing directory, got "%s".', static::class, $baseDir));
+        if (!\is_dir($directory)) {
+            throw new \LogicException(\sprintf('%s::phptDirectory() must return an existing directory, got "%s".', static::class, $directory));
         }
 
-        return $baseDir;
+        return $directory;
     }
 }

@@ -11,7 +11,7 @@ namespace AliesDev\PsalmTester;
  * early is not mistaken for a finished one. Completion is detected by polling proc_get_status().
  *
  * @internal
- * @psalm-type Job = array{command: string|non-empty-list<string>, env?: array<string, string>}
+ * @psalm-type Job = array{command: string|non-empty-list<string>, env?: array<string, string>, cwd?: ?string}
  * @psalm-type LiveProcess = array{process: resource, stdoutFile: string, startedAt: float}
  */
 final class ProcessRunner
@@ -77,6 +77,9 @@ final class ProcessRunner
         }
     }
 
+    /**
+     * @return positive-int
+     */
     public static function cpuCount(): int
     {
         if (\PHP_OS_FAMILY === 'Windows') {
@@ -113,7 +116,7 @@ final class ProcessRunner
                 $job['command'],
                 [0 => ['file', $nullDevice, 'r'], 1 => ['file', $stdoutFile, 'w']],
                 $pipes,
-                null,
+                $job['cwd'] ?? null,
                 $job['env'] ?? null,
             );
         } finally {

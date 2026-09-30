@@ -5,107 +5,209 @@ declare(strict_types=1);
 namespace AliesDev\PsalmTester;
 
 use Composer\InstalledVersions;
-use PHPUnit\Framework\Assert;
 
 /**
+ * Runs .phpt tests through Psalm. Configure with the with*() methods, each returning a copy.
+ *
  * @api
+ * @psalm-type Options = array{psalm: ?string, config: string, arguments: string, timeout: ?float, concurrency: ?positive-int, workingDirectory: ?string, env: array<string, string>, progress: bool, temporaryDirectory: ?string}
+ * @psalm-type GroupEntries = array<array-key, array{file: string, phpt: Phpt}>
  */
 final readonly class PsalmTester
 {
     /**
-     * @param positive-int $concurrency
+     * @param Options $options
      * @psalm-mutation-free
      */
-    private function __construct(
-        private string $psalmPath,
-        private string $defaultArguments,
-        private string $temporaryDirectory,
-        private bool $showProgress,
-        private int $concurrency,
-        private ?float $timeoutSeconds,
-    ) {}
+    private function __construct(private array $options) {}
 
-    public static function create(
-        ?string $psalmPath = null,
-        string $defaultArguments = '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
-        ?string $temporaryDirectory = null,
-        bool $showProgress = true,
-        ?int $concurrency = null,
-        ?float $timeoutSeconds = null,
-    ): self {
-        $concurrency ??= ProcessRunner::cpuCount();
-
-        if ($concurrency < 1) {
-            throw new \InvalidArgumentException('$concurrency must be at least 1.');
-        }
-
-        return new self(
-            psalmPath: $psalmPath ?? self::findPsalm(),
-            defaultArguments: $defaultArguments,
-            temporaryDirectory: self::resolveTemporaryDirectory($temporaryDirectory),
-            showProgress: $showProgress,
-            concurrency: $concurrency,
-            timeoutSeconds: $timeoutSeconds,
-        );
+    /**
+     * Defaults: the vimeo/psalm binary installed via Composer, the bundled psalm.xml,
+     * "--no-progress --no-diff", no timeout, one process per CPU core, progress on STDERR.
+     *
+     * @psalm-pure
+     */
+    public static function create(): self
+    {
+        return new self([
+            'psalm' => null,
+            'config' => __DIR__ . '/psalm.xml',
+            'arguments' => '--no-progress --no-diff',
+            'timeout' => null,
+            'concurrency' => null,
+            'workingDirectory' => null,
+            'env' => [],
+            'progress' => true,
+            'temporaryDirectory' => null,
+        ]);
     }
 
-    private static function findPsalm(): string
+    /** @psalm-mutation-free */
+    public function withPsalm(string $binary): self
     {
-        if (!method_exists(InstalledVersions::class, 'getInstallPath')) {
-            throw new \RuntimeException('Cannot find Psalm installation path. Please, explicitly specify path to Psalm binary.');
-        }
-
-        $installPath = InstalledVersions::getInstallPath('vimeo/psalm');
-
-        if ($installPath === null) {
-            throw new \RuntimeException('Cannot find Psalm installation path. Please, explicitly specify path to Psalm binary.');
-        }
-
-        return $installPath . '/psalm';
-    }
-
-    private static function resolveTemporaryDirectory(?string $temporaryDirectory): string
-    {
-        $temporaryDirectory ??= sys_get_temp_dir() . '/psalm_test';
-
-        if (!is_dir($temporaryDirectory) && !mkdir($temporaryDirectory, recursive: true)) {
-            throw new \RuntimeException(\sprintf('Failed to create temporary directory %s.', $temporaryDirectory));
-        }
-
-        return $temporaryDirectory;
+        return new self(['psalm' => $binary] + $this->options);
     }
 
     /**
-     * Run multiple tests in batched Psalm invocations (one per unique argument set).
-     * Up to $concurrency groups (default: one per CPU core) run at a time; the rest are queued.
-     * Returns formatted output per test — callers are responsible for assertions.
-     * @api
-     * @param array<array-key, PsalmTest> $tests keyed by identifier
-     * @return array<array-key, string> formatted output keyed by identifier
+     * Passed as --config=, unless a test's --ARGS-- has its own --config.
+     *
+     * @psalm-mutation-free
      */
-    public function runBatch(array $tests): array
+    public function withConfig(string $psalmXml): self
     {
-        /** @var array<string, array<array-key, array{file: string, test: PsalmTest}>> */
+        return new self(['config' => $psalmXml] + $this->options);
+    }
+
+    /**
+     * Arguments for every Psalm run (default "--no-progress --no-diff"); a test's --ARGS-- are
+     * appended to them.
+     *
+     * @psalm-mutation-free
+     */
+    public function withArguments(string $args): self
+    {
+        return new self(['arguments' => $args] + $this->options);
+    }
+
+    /**
+     * Kills a Psalm run (with its process tree) still running $seconds after it started; its
+     * tests get Outcome::Error. Null means no timeout.
+     *
+     * @psalm-mutation-free
+     */
+    public function withTimeout(?float $seconds): self
+    {
+        return new self(['timeout' => $seconds] + $this->options);
+    }
+
+    /**
+     * How many SKIPIF scripts, and separately how many Psalm runs, may run at once.
+     *
+     * @psalm-mutation-free
+     */
+    public function withConcurrency(int $n): self
+    {
+        if ($n < 1) {
+            throw new \InvalidArgumentException('Concurrency must be at least 1.');
+        }
+
+        return new self(['concurrency' => $n] + $this->options);
+    }
+
+    /**
+     * Working directory of Psalm and SKIPIF processes; relative --config paths resolve against it.
+     *
+     * @psalm-mutation-free
+     */
+    public function withWorkingDirectory(string $dir): self
+    {
+        return new self(['workingDirectory' => $dir] + $this->options);
+    }
+
+    /**
+     * Extra environment variables for Psalm and SKIPIF processes, on top of the inherited ones.
+     *
+     * @param array<string, string> $env
+     * @psalm-mutation-free
+     */
+    public function withEnv(array $env): self
+    {
+        return new self(['env' => $env] + $this->options);
+    }
+
+    /**
+     * Whether to print one "<arguments>: <n> tests" line per Psalm run on STDERR.
+     *
+     * @psalm-mutation-free
+     */
+    public function withProgress(bool $on): self
+    {
+        return new self(['progress' => $on] + $this->options);
+    }
+
+    /**
+     * Where code files and per-run cache directories are created (default: <system temp>/psalm_test).
+     *
+     * @psalm-mutation-free
+     */
+    public function withTemporaryDirectory(string $dir): self
+    {
+        return new self(['temporaryDirectory' => $dir] + $this->options);
+    }
+
+    /**
+     * Runs the tests: evaluates SKIPIF scripts concurrently, then analyzes the rest with one Psalm
+     * run per distinct argument set (concurrently, bounded by withConcurrency()). Throws if Psalm
+     * output cannot be decoded; still-running Psalm processes are killed first.
+     *
+     * @template TKey of array-key
+     * @param iterable<TKey, Phpt> $phpts
+     * @return array<TKey, Result> in the order of $phpts
+     */
+    public function run(iterable $phpts): array
+    {
+        $phpts = \is_array($phpts) ? $phpts : \iterator_to_array($phpts);
+        $concurrency = $this->options['concurrency'] ?? ProcessRunner::cpuCount();
+        $env = $this->options['env'] + (\getenv() ?: []);
+
+        $scripts = [];
+        foreach ($phpts as $id => $phpt) {
+            if ($phpt->skipif !== null) {
+                $scripts[$id] = $phpt->skipif;
+            }
+        }
+
+        $skipReasons = SkipifEvaluator::evaluate($scripts, $concurrency, $this->options['workingDirectory'], $env);
+        $toAnalyze = [];
+        foreach ($phpts as $id => $phpt) {
+            if (($skipReasons[$id] ?? null) === null) {
+                $toAnalyze[$id] = $phpt;
+            }
+        }
+
+        $analyzed = $toAnalyze === [] ? [] : $this->analyze($toAnalyze, $concurrency, $env);
+
+        $results = [];
+        foreach ($phpts as $id => $phpt) {
+            $results[$id] = $analyzed[$id] ?? new Result($phpt, Outcome::Skipped, reason: $skipReasons[$id] ?? null);
+        }
+
+        return $results;
+    }
+
+    public function runOne(Phpt $phpt): Result
+    {
+        return $this->run([$phpt])[0];
+    }
+
+    /**
+     * @template TKey of array-key
+     * @param non-empty-array<TKey, Phpt> $phpts
+     * @param positive-int $concurrency
+     * @param array<string, string> $env
+     * @return array<TKey, Result>
+     */
+    private function analyze(array $phpts, int $concurrency, array $env): array
+    {
+        $temporaryDirectory = self::resolveTemporaryDirectory($this->options['temporaryDirectory']);
+        $psalm = $this->options['psalm'] ?? self::findPsalm();
+        /** @var array<string, GroupEntries> */
         $groups = [];
         /** @var list<string> */
         $tempFiles = [];
         /** @var list<string> */
         $cacheDirs = [];
+        /** @var array<TKey, Result> */
+        $results = [];
 
         try {
-            // Pre-seed results keyed by input id so the returned dict preserves $tests input order.
-            /** @var array<array-key, string> */
-            $results = [];
-
-            foreach ($tests as $id => $test) {
-                $results[$id] = '';
-                $args = self::normalizeArgs($test->arguments ?: $this->defaultArguments);
-                $file = $this->createTemporaryCodeFile($test->code);
+            foreach ($phpts as $id => $phpt) {
+                $file = self::createTemporaryCodeFile($temporaryDirectory, $phpt->code);
                 $tempFiles[] = $file;
-                $groups[$args][$id] = ['file' => $file, 'test' => $test];
+                $groups[$this->effectiveArguments($phpt)][$id] = ['file' => $file, 'phpt' => $phpt];
             }
 
-            /** @var array<string, array{command: string, env: array<string, string>}> */
+            /** @var array<string, array{command: string, env: array<string, string>, cwd: ?string}> */
             $jobs = [];
 
             foreach ($groups as $args => $entries) {
@@ -113,32 +215,49 @@ final readonly class PsalmTester
                 // don't race on a shared cache location. XDG_CACHE_HOME is what Psalm itself
                 // reads; TMPDIR/TMP/TEMP cover plugins that derive their cache from
                 // sys_get_temp_dir() (e.g. psalm-plugin-laravel's Plugin::getCacheLocation()).
-                $cacheDir = $this->createGroupCacheDir();
+                $cacheDir = self::createGroupCacheDir($temporaryDirectory);
                 $cacheDirs[] = $cacheDir;
-                $jobs[$args] = ['command' => $this->buildCommand($args, $entries), 'env' => self::buildChildEnv($cacheDir)];
+                $jobs[$args] = [
+                    'command' => self::buildCommand($psalm, $args, $entries),
+                    'env' => ['XDG_CACHE_HOME' => $cacheDir, 'TMPDIR' => $cacheDir, 'TMP' => $cacheDir, 'TEMP' => $cacheDir] + $env,
+                    'cwd' => $this->options['workingDirectory'],
+                ];
             }
 
             ProcessRunner::run(
                 $jobs,
-                $this->concurrency,
-                $this->temporaryDirectory,
+                $concurrency,
+                $temporaryDirectory,
                 function (string $args, ?string $output) use ($groups, &$results): void {
+                    $entries = $groups[$args];
+
                     if ($output === null) {
-                        $message = \sprintf(
+                        $reason = \sprintf(
                             'PsalmTimeout: group [%s] did not finish within %.1fs and was terminated.',
                             $args,
-                            (float) $this->timeoutSeconds,
+                            (float) $this->options['timeout'],
                         );
-                        foreach (\array_keys($groups[$args]) as $id) {
-                            $results[$id] = $message;
+                        foreach ($entries as $id => $entry) {
+                            /** @var TKey $id */
+                            $results[$id] = new Result($entry['phpt'], Outcome::Error, reason: $reason);
                         }
 
                         return;
                     }
 
-                    $this->collectGroupResults($args, $groups[$args], $output, $results);
+                    $errorsByFile = IssueFormatter::decodeByFile($output, $args);
+
+                    foreach ($entries as $id => $entry) {
+                        $issues = IssueFormatter::toIssues($errorsByFile[IssueFormatter::fileKey($entry['file'])] ?? [], $entry['phpt']->codeFirstLine);
+                        /** @var TKey $id */
+                        $results[$id] = Result::fromAnalysis($entry['phpt'], IssueFormatter::format($issues), $issues);
+                    }
+
+                    if ($this->options['progress']) {
+                        \fwrite(\STDERR, \sprintf("%s: %d %s\n", $args, \count($entries), \count($entries) === 1 ? 'test' : 'tests'));
+                    }
                 },
-                $this->timeoutSeconds,
+                $this->options['timeout'],
             );
 
             return $results;
@@ -153,20 +272,30 @@ final readonly class PsalmTester
     }
 
     /**
-     * @psalm-pure
+     * The group key and the arguments Psalm gets: the configured arguments, then --config (unless
+     * the test has its own), then the test's --ARGS--, whitespace-collapsed because a newline would
+     * end the shell command.
+     *
+     * @psalm-mutation-free
      */
-    private static function normalizeArgs(string $args): string
+    private function effectiveArguments(Phpt $phpt): string
     {
-        // Collapses newlines from --ARGS-- sections, which a shell would treat as command separators.
-        return (string) \preg_replace('/\s+/', ' ', \trim($args));
+        $args = $this->options['arguments'];
+
+        if (\preg_match('/(?:^|\s)(?:--config\b|-c\b)/', $phpt->arguments) !== 1) {
+            $args .= ' --config=' . \escapeshellarg($this->options['config']);
+        }
+
+        return (string) \preg_replace('/\s+/', ' ', \trim($args . ' ' . $phpt->arguments));
     }
 
     /**
-     * @param string $args Pre-built argument string, trusted input from $this->defaultArguments or
-     *     PsalmTest::$arguments (parsed from .phpt files). Not escaped: it holds several arguments.
-     * @param array<array-key, array{file: string, test: PsalmTest}> $entries
+     * @param string $args Trusted input (tester configuration and .phpt --ARGS--), not escaped:
+     *     it holds several arguments.
+     * @param GroupEntries $entries
+     * @psalm-pure
      */
-    private function buildCommand(string $args, array $entries): string
+    private static function buildCommand(string $psalm, string $args, array $entries): string
     {
         // The per-group cache dir starts empty and is deleted afterwards, so writing a cache only
         // costs time (2x on a 700-file suite); --no-cache also keeps an explicitly configured
@@ -179,35 +308,47 @@ final readonly class PsalmTester
             // exec replaces the shell, so killing the process proc_open() returns kills Psalm itself.
             '%s%s --output-format=json %s %s',
             \PHP_OS_FAMILY === 'Windows' ? '' : 'exec ',
-            \escapeshellarg($this->psalmPath),
+            \escapeshellarg($psalm),
             $args,
             \implode(' ', array_map(static fn(array $entry): string => \escapeshellarg($entry['file']), $entries)),
         );
     }
 
-    private function createGroupCacheDir(): string
+    private static function findPsalm(): string
     {
-        $dir = $this->temporaryDirectory . '/cache_' . \bin2hex(\random_bytes(8));
+        if (!method_exists(InstalledVersions::class, 'getInstallPath')) {
+            throw new \RuntimeException('Cannot find Psalm installation path. Pass it to withPsalm().');
+        }
+
+        $installPath = InstalledVersions::getInstallPath('vimeo/psalm');
+
+        if ($installPath === null) {
+            throw new \RuntimeException('Cannot find Psalm installation path. Pass it to withPsalm().');
+        }
+
+        return $installPath . '/psalm';
+    }
+
+    private static function resolveTemporaryDirectory(?string $temporaryDirectory): string
+    {
+        $temporaryDirectory ??= \sys_get_temp_dir() . '/psalm_test';
+
+        if (!\is_dir($temporaryDirectory) && !@\mkdir($temporaryDirectory, recursive: true) && !\is_dir($temporaryDirectory)) {
+            throw new \RuntimeException(\sprintf('Failed to create temporary directory %s.', $temporaryDirectory));
+        }
+
+        return $temporaryDirectory;
+    }
+
+    private static function createGroupCacheDir(string $temporaryDirectory): string
+    {
+        $dir = $temporaryDirectory . '/cache_' . \bin2hex(\random_bytes(8));
 
         if (!\mkdir($dir, 0777, true) && !\is_dir($dir)) {
             throw new \RuntimeException(\sprintf('Failed to create per-group cache directory %s.', $dir));
         }
 
         return $dir;
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private static function buildChildEnv(string $cacheDir): array
-    {
-        $env = \getenv() ?: [];
-        $env['XDG_CACHE_HOME'] = $cacheDir;
-        $env['TMPDIR'] = $cacheDir;
-        $env['TMP'] = $cacheDir;
-        $env['TEMP'] = $cacheDir;
-
-        return $env;
     }
 
     private static function removeDirectoryRecursive(string $dir): void
@@ -239,115 +380,16 @@ final readonly class PsalmTester
         @\rmdir($dir);
     }
 
-    /**
-     * @param array<array-key, array{file: string, test: PsalmTest}> $entries
-     * @param array<array-key, string> $results
-     * @param-out array<array-key, string> $results
-     */
-    private function collectGroupResults(string $args, array $entries, string $output, array &$results): void
+    private static function createTemporaryCodeFile(string $temporaryDirectory, string $contents): string
     {
-        $decoded = $this->decodeOutput($output, $args);
-
-        /** @var array<string, list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>> */
-        $errorsByFile = [];
-        foreach ($decoded as $error) {
-            $resolved = \realpath($error['file_path']);
-            $key = $resolved !== false ? $resolved : $error['file_path'];
-            $errorsByFile[$key][] = $error;
-        }
-
-        $this->writeProgressStart($args);
-        foreach ($entries as $id => $entry) {
-            $resolved = \realpath($entry['file']);
-            $key = $resolved !== false ? $resolved : $entry['file'];
-            $results[$id] = $this->formatErrors(
-                $errorsByFile[$key] ?? [],
-                $entry['test']->codeFirstLine,
-            );
-        }
-        $this->writeProgressEnd(\count($entries));
-    }
-
-    /**
-     * Runs a single test. Goes through the same proc_open + per-group cache/env isolation
-     * path as runBatch() (a group of one), so a lone test() call and a runBatch() call with
-     * the same PsalmTest produce byte-identical formatted output.
-     */
-    public function test(PsalmTest $test): void
-    {
-        $results = $this->runBatch(['test' => $test]);
-
-        /** @psalm-suppress PossiblyUndefinedStringArrayOffset runBatch() always seeds every input key. */
-        Assert::assertThat($results['test'], $test->constraint);
-    }
-
-    /**
-     * @return list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>
-     * @psalm-mutation-free
-     */
-    private function decodeOutput(string $output, string $args): array
-    {
-        try {
-            /** @var list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}> */
-            return json_decode($output, true, flags: \JSON_THROW_ON_ERROR);
-        } catch (\JsonException $e) {
-            throw new \RuntimeException(\sprintf(
-                "Failed to decode Psalm JSON output for args [%s]: %s\nOutput: %s",
-                $args,
-                $e->getMessage(),
-                $output,
-            ), previous: $e);
-        }
-    }
-
-    /**
-     * @param list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}> $errors
-     * @param positive-int $codeFirstLine
-     */
-    private function formatErrors(array $errors, int $codeFirstLine): string
-    {
-        /** @psalm-suppress PossiblyUndefinedStringArrayOffset */
-        usort($errors, static fn(array $a, array $b): int => ($a['line_from'] <=> $b['line_from'])
-            ?: ($a['column_from'] <=> $b['column_from'])
-            ?: ($a['type'] <=> $b['type'])
-            ?: ($a['message'] <=> $b['message']));
-
-        return implode("\n", array_map(
-            static fn(array $error): string => \sprintf(
-                '%s on line %d: %s',
-                $error['type'],
-                $error['line_from'] + $codeFirstLine - 1,
-                $error['message'],
-            ),
-            $errors,
-        ));
-    }
-
-    private function writeProgressStart(string $args): void
-    {
-        if ($this->showProgress) {
-            $displayArgs = \preg_replace('/\s+/', ' ', \trim($args)) ?? $args;
-            fwrite(\STDERR, $displayArgs);
-        }
-    }
-
-    private function writeProgressEnd(int $count): void
-    {
-        if ($this->showProgress) {
-            fwrite(\STDERR, \sprintf(": %d %s\n", $count, $count === 1 ? 'test' : 'tests'));
-        }
-    }
-
-    private function createTemporaryCodeFile(string $contents): string
-    {
-        $file = tempnam($this->temporaryDirectory, 'code_');
+        $file = \tempnam($temporaryDirectory, 'code_');
 
         if ($file === false) {
-            throw new \LogicException(\sprintf('Failed to create temporary code file in %s.', $this->temporaryDirectory));
+            throw new \RuntimeException(\sprintf('Failed to create temporary code file in %s.', $temporaryDirectory));
         }
 
-        if (file_put_contents($file, $contents) === false) {
-            @unlink($file);
+        if (\file_put_contents($file, $contents) === false) {
+            @\unlink($file);
 
             throw new \RuntimeException(\sprintf('Failed to write temporary code file: %s.', $file));
         }

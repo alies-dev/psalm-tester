@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace AliesDev\PsalmTester\Tests;
 
-use AliesDev\PsalmTester\Tests\Fixtures\PhptTestCase\FixturePhptCase;
+use AliesDev\PsalmTester\Tests\Fixtures\PsalmPhptTestCase\FixturePhptCase;
 use PHPUnit\Framework\TestCase;
 
-final class PhptTestCaseTest extends TestCase
+final class PsalmPsalmPhptTestCaseTest extends TestCase
 {
-    private const FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/FixturePhptCase.php';
-    private const ASSERTING_FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/AssertingFixturePhptCase.php';
-    private const BROKEN_FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/BrokenFixturePhptCase.php';
+    private const FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/FixturePhptCase.php';
+    private const ASSERTING_FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/AssertingFixturePhptCase.php';
+    private const BROKEN_FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/BrokenFixturePhptCase.php';
 
     private string $logDir = '';
 
@@ -37,7 +37,7 @@ final class PhptTestCaseTest extends TestCase
     {
         self::assertSame(
             ['alpha.phpt', 'beta.phpt', 'skipped.phpt', 'sub/gamma.phpt'],
-            \array_keys(\iterator_to_array(FixturePhptCase::providePhptFiles())),
+            \array_keys(\iterator_to_array(FixturePhptCase::phptFiles())),
         );
     }
 
