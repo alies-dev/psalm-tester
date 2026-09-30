@@ -1,28 +1,40 @@
 {
     "name": "alies-dev/psalm-tester",
-    "description": "Test Psalm via phpt files!",
+    "description": "Run Psalm on .phpt fixture files from PHPUnit to test Psalm plugins, stubs and type inference",
     "license": "MIT",
     "type": "library",
     "keywords": [
         "php",
+        "phpt",
         "phpunit",
         "psalm",
+        "psalm-plugin",
         "static analysis",
-        "testing"
+        "testing",
+        "type-testing"
     ],
     "authors": [
         {
             "name": "Valentin Udaltsov",
-            "email": "udaltsov.valentin@gmail.com"
+            "email": "udaltsov.valentin@gmail.com",
+            "role": "Original Author"
         },
         {
-            "name": "Alies Lapatsin"
+            "name": "Alies Lapatsin",
+            "email": "github@alies.dev",
+            "role": "Maintainer"
         }
     ],
+    "homepage": "https://github.com/alies-dev/psalm-tester",
+    "support": {
+        "issues": "https://github.com/alies-dev/psalm-tester/issues",
+        "source": "https://github.com/alies-dev/psalm-tester"
+    },
     "require": {
         "php": "^8.2",
         "composer-runtime-api": "^2",
-        "phpunit/phpunit": "^11 || ^12 || ^13"
+        "phpunit/phpunit": "^11 || ^12 || ^13",
+        "vimeo/psalm": "^6.10 || ^7.0.0-beta16"
     },
     "require-dev": {
         "ergebnis/composer-normalize": "^2.50",
@@ -30,8 +42,7 @@
         "phpyh/coding-standard": "^2.6",
         "psalm/plugin-phpunit": "^0.19.5 || ^0.20.0",
         "rector/rector": "^2.3",
-        "shipmonk/composer-dependency-analyser": "^1.8",
-        "vimeo/psalm": "^6.10 || ^7.0.0-beta16"
+        "shipmonk/composer-dependency-analyser": "^1.8"
     },
     "autoload": {
         "psr-4": {
@@ -56,5 +67,13 @@
         "psalm": "psalm --show-info=true --no-diff",
         "rector": "rector process",
         "test": "phpunit"
+    },
+    "scripts-descriptions": {
+        "dependency-analyser": "Check for unused, shadow and misplaced Composer dependencies.",
+        "fixcs": "Fix code style with PHP CS Fixer.",
+        "pre-command-run": "Ensure var/ exists before commands that write to it.",
+        "psalm": "Run Psalm static analysis.",
+        "rector": "Apply Rector refactorings.",
+        "test": "Run the PHPUnit test suite."
     }
 }
