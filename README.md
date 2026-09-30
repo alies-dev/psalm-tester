@@ -48,18 +48,27 @@ line 2.
 <?php
 
 use AliesDev\PsalmTester\PsalmPhptTestCase;
-use AliesDev\PsalmTester\PsalmTester;
 
 final class PsalmTest extends PsalmPhptTestCase
 {
     protected static function phptDirectory(): string { return __DIR__ . '/phpt'; }
-    protected static function tester(): PsalmTester { return PsalmTester::create()->withConfig(__DIR__ . '/psalm.xml'); }
 }
 ```
 
 Every `*.phpt` file under `phptDirectory()` (recursively) becomes one data set of `testPhpt`, named by its path
-relative to that directory (e.g. `sub/array_values.phpt`), in sorted order. `tester()` is optional; the default is
-`PsalmTester::create()`.
+relative to that directory (e.g. `sub/array_values.phpt`), in sorted order.
+
+Override `tester()` to configure how Psalm runs, e.g. with your own `psalm.xml` (see
+[Configuring the tester](#configuring-the-tester)):
+
+```php
+use AliesDev\PsalmTester\PsalmTester;
+
+protected static function tester(): PsalmTester
+{
+    return PsalmTester::create()->withConfig(__DIR__ . '/psalm.xml');
+}
+```
 
 Before the first test runs, all selected files are handed to one `PsalmTester::run()` call: their `--SKIPIF--` scripts
 are evaluated concurrently and the remaining files are analyzed together (see [How tests run](#how-tests-run)). A
@@ -80,10 +89,11 @@ Psalm run.
 
 | Section | Meaning |
 |---|---|
+| `--TEST--` | Optional description; ignored. |
 | `--FILE--` | Required. The code Psalm analyzes. |
 | `--EXPECT--` | Psalm's output must be identical to this, one `<IssueType> on line <n>: <message>` line per issue. |
 | `--EXPECTF--` | Like `--EXPECT--`, with the format placeholders of PHPUnit's `assertStringMatchesFormat()`. |
-| `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--` | The path of a file holding the expectation. |
+| `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--` | The path of a file holding the expectation, relative to the `.phpt` file. |
 | `--ARGS--` | Extra Psalm arguments for this test (see below). |
 | `--SKIPIF--` | A PHP script; if its output starts with `skip`, the test is skipped with the rest of that output as reason. |
 
@@ -100,8 +110,10 @@ working directory and environment:
 
 ### Psalm arguments
 
-Every Psalm run gets the tester's arguments (default `--no-progress --no-diff`), then `--config=<the configured
-psalm.xml>`, then the test's `--ARGS--`. If `--ARGS--` contains its own `--config`, it replaces the configured one:
+Psalm is started without a shell. Its arguments are the tester's (default `--no-progress --no-diff`), then
+`--config=<the configured psalm.xml>`, then the test's `--ARGS--`, split into words like a shell would (quotes and
+backslashes work, nothing is expanded). A config option (`--config=x`, `--config x` or `-c x`) in either the tester's
+arguments or `--ARGS--` replaces the configured config:
 
 ```phpt
 --ARGS--
@@ -118,13 +130,13 @@ psalm.xml>`, then the test's `--ARGS--`. If `--ARGS--` contains its own `--confi
 |---|---|
 | `withPsalm(string $binary)` | the `vimeo/psalm` binary installed via Composer |
 | `withConfig(string $psalmXml)` | the minimal [psalm.xml](src/psalm.xml) shipped with this package |
-| `withArguments(string $args)` | `--no-progress --no-diff` |
+| `withArguments(string ...$args)` | `'--no-progress', '--no-diff'`; one argument per parameter |
 | `withTimeout(?float $seconds)` | `null` (no timeout) |
 | `withConcurrency(int $n)` | one per CPU core; bounds SKIPIF scripts and Psalm runs |
 | `withWorkingDirectory(string $dir)` | the current one; relative `--config` paths resolve against it |
-| `withEnv(array $env)` | none; extra variables for Psalm and SKIPIF processes |
-| `withProgress(bool $on)` | `true`: one `<arguments>: <n> tests` line per Psalm run on STDERR |
-| `withTemporaryDirectory(string $dir)` | `<system temp dir>/psalm_test` |
+| `withEnv(array $env)` | none; extra variables for Psalm and SKIPIF processes (not `XDG_CACHE_HOME`, `TMPDIR`, `TMP`, `TEMP`, see below) |
+| `withProgress(bool $on)` | `false`; `true` prints one `<arguments>: <n> tests` line per Psalm run on STDERR, which PHPUnit's `--process-isolation` treats as an error |
+| `withTemporaryDirectory(string $dir)` | `<system temp dir>/psalm_test`; a relative path is resolved against the current directory |
 
 ## Using the tester directly
 
@@ -158,8 +170,12 @@ and update mode support; `run()` does not produce them yet.
 
 `run()` evaluates all SKIPIF scripts first, then analyzes the remaining tests with **one Psalm run per distinct argument
 set** instead of one per file, so a plugin with an expensive boot (e.g. one that boots a Laravel application) pays it
-once per argument set. Up to `withConcurrency()` Psalm runs go at once; the rest wait for a free slot. If Psalm's output
-cannot be decoded, `run()` throws right away and kills the Psalm runs still going.
+once per argument set. Up to `withConcurrency()` Psalm runs go at once; the rest wait for a free slot.
+
+`run()` returns exactly one `Result` per test. A Psalm run whose output is not Psalm's JSON (e.g. it crashed), or that
+reports issues in files other than the tested code (e.g. an included file), gives `Outcome::Error` to each of its tests,
+with the reason. `run()` throws only when the tester itself fails (e.g. it cannot write a temporary file), and then kills
+the Psalm runs still going first. Duplicate keys in the input are rejected.
 
 > **Important:** all files of one argument set are analyzed in a single Psalm run, so they share a global symbol table.
 > Keep class and function names unique across `.phpt` files with the same arguments, otherwise Psalm reports
@@ -183,9 +199,12 @@ arguments and the timeout. Other runs are unaffected.
 | `PsalmTest::$constraint` | `Phpt::$expectation`, a value object; `$expectation->constraint()` builds the constraint |
 | `PsalmTest::getSkipReason($file)` | removed: `run()` evaluates `--SKIPIF--` (concurrently) and reports `Outcome::Skipped` with the reason |
 | `PsalmTester::create($psalmPath, $defaultArguments, $temporaryDirectory, $showProgress)` | `PsalmTester::create()` plus `withPsalm()`, `withArguments()` / `withConfig()`, `withTemporaryDirectory()`, `withProgress()` |
-| `defaultArguments` including `--config=...` | `withConfig()` for the config, `withArguments()` for the rest |
+| `defaultArguments` including `--config=...` | `withConfig()` for the config and `withArguments()` for the rest, or keep `--config=...` in `withArguments()` |
 | `--ARGS--` replaced the default arguments | `--ARGS--` is appended to the configured arguments; its `--config` replaces the configured config. Files repeating the full defaults keep working. |
-| `$tester->runBatch($tests)` returning output strings | `$tester->run($phpts)` returning `Result` objects (`$result->output` is the old string) |
+| `$tester->runBatch($tests)` returning output strings, throwing on undecodable Psalm output | `$tester->run($phpts)` returning `Result` objects (`$result->output` is the old string); undecodable output becomes `Outcome::Error` |
+| `showProgress: true` by default | progress is off by default; `withProgress(true)` |
+| `--ARGS--` and `defaultArguments` went through a shell | no shell: `withArguments()` takes one argument per parameter, `--ARGS--` is split into words |
+| `*_EXTERNAL` paths relative to the current directory | relative to the `.phpt` file |
 | `$tester->test($test)` | `$tester->runOne($phpt)->assert()` |
 | a hand-written `TestCase` with discovery, a data provider and `runBatch()` | `PsalmPhptTestCase` (see [Quick start](#quick-start)) |
 | unknown sections threw `Section X is not supported.` | still throw, naming the file; `--CLEAN--`, `--ENV--`, `--INI--` get a "not supported by psalm-tester" message |

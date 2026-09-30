@@ -10,6 +10,7 @@ use AliesDev\PsalmTester\Outcome;
 use AliesDev\PsalmTester\Phpt;
 use AliesDev\PsalmTester\Result;
 use AliesDev\PsalmTester\PsalmTester;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 
@@ -35,40 +36,99 @@ final class PsalmTesterRunTest extends TestCase
     /** @var list<string> */
     private array $scratchDirs = [];
 
-    public function testRunFailsFastOnInvalidOutputAndKillsTheStillRunningSibling(): void
+    public function testAnUndecodableGroupGetsErrorResultsWhileOtherGroupsComplete(): void
     {
         $temporaryDirectory = $this->makeScratchDir();
-        $pidDir = $this->makeScratchDir();
-        \putenv('STUB_PID_DIR=' . $pidDir);
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($temporaryDirectory)->withProgress(false);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($temporaryDirectory);
 
-        $start = \microtime(true);
+        $results = $tester->run([
+            'slow' => new Phpt(code: '<?php', expectation: Expectation::format('StubError on line 1: %s'), arguments: '--stub-sleep=0.5'),
+            'bad' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--stub-mode=invalid_json'),
+            'bad-too' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--stub-mode=invalid_json'),
+            'empty' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--stub-mode=no_output'),
+        ]);
 
-        try {
-            $tester->run([
-                'slow' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--stub-sleep=30'),
-                // Waits until both stubs are running, so the sibling is live when this one fails.
-                'bad' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--stub-mode=invalid_json --stub-await-pids=2'),
-            ]);
-            self::fail('Expected invalid JSON to throw.');
-        } catch (\RuntimeException $e) {
-            self::assertStringContainsString('Failed to decode Psalm JSON output', $e->getMessage());
-        }
-
-        self::assertLessThan(10.0, \microtime(true) - $start, 'The failure must not wait for the 30s sibling.');
-        $pids = \array_map(\basename(...), \glob($pidDir . '/*') ?: []);
-        self::assertCount(2, $pids);
-        foreach ($pids as $pid) {
-            self::assertFalse(self::isAlive((int) $pid), \sprintf('Stub pid %s survived.', $pid));
-        }
+        self::assertSame(['slow', 'bad', 'bad-too', 'empty'], \array_keys($results));
+        self::assertSame(Outcome::Passed, $results['slow']->outcome);
+        self::assertSame(Outcome::Error, $results['bad']->outcome);
+        self::assertStringContainsString('Failed to decode Psalm JSON output for args [--no-progress --no-diff --config=', (string) $results['bad']->reason);
+        self::assertStringContainsString('--stub-mode=invalid_json]', (string) $results['bad']->reason);
+        self::assertStringContainsString("Output: NOT JSON", (string) $results['bad']->reason);
+        self::assertSame($results['bad']->reason, $results['bad-too']->reason);
+        self::assertSame(Outcome::Error, $results['empty']->outcome);
+        self::assertStringContainsString('Output: (empty)', (string) $results['empty']->reason);
         self::assertSame([], \glob($temporaryDirectory . '/*'), 'Code files, stdout files and cache dirs must be removed.');
+    }
+
+    public function testIssuesOutsideTheTestedCodeGiveTheirGroupErrorResults(): void
+    {
+        $results = self::createTester()->run([
+            'a' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--stub-mode=foreign_file'),
+            'b' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--stub-mode=foreign_file'),
+            'other' => new Phpt(code: '<?php', expectation: Expectation::format('StubError on line 1: %s')),
+        ]);
+
+        foreach (['a', 'b'] as $id) {
+            self::assertSame(Outcome::Error, $results[$id]->outcome);
+            self::assertStringContainsString('Psalm reported issues outside the tested code', (string) $results[$id]->reason);
+            self::assertStringContainsString('/elsewhere/Included.php:3 ForeignError: from an included file', (string) $results[$id]->reason);
+        }
+        self::assertSame(Outcome::Passed, $results['other']->outcome);
+    }
+
+    public function testDuplicateKeysFromAnIterableAreRejected(): void
+    {
+        $phpt = new Phpt(code: '<?php', expectation: Expectation::exact(''));
+        $phpts = (static function () use ($phpt): \Generator {
+            yield 'same' => $phpt;
+            yield 'same' => $phpt;
+        })();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Duplicate test key "same"');
+
+        self::createTester()->run($phpts);
+    }
+
+    public function testARelativeTemporaryDirectoryIsResolvedWhenConfiguredNotAgainstTheWorkingDirectory(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=env_record');
+        \putenv('STUB_ENV_LOG_DIR=' . $logDir);
+        $relative = 'var/psalm_tester_relative_' . \bin2hex(\random_bytes(4));
+        $this->scratchDirs[] = \getcwd() . '/' . $relative;
+
+        self::createTester()->withTemporaryDirectory($relative)->withWorkingDirectory(__DIR__ . '/bin')
+            ->runOne(new Phpt(code: '<?php', expectation: Expectation::exact('')));
+
+        $logs = \glob($logDir . '/*.json') ?: [];
+        self::assertCount(1, $logs);
+        /** @var array{XDG_CACHE_HOME: string} $record */
+        $record = \json_decode((string) \file_get_contents($logs[0]), true, flags: \JSON_THROW_ON_ERROR);
+        self::assertStringStartsWith(\getcwd() . '/' . $relative . '/cache_', $record['XDG_CACHE_HOME']);
+        self::assertSame([], \glob(\getcwd() . '/' . $relative . '/*'));
+    }
+
+    public function testRunUsesTheWorkingDirectoryForPsalm(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=env_record');
+        \putenv('STUB_ENV_LOG_DIR=' . $logDir);
+
+        self::createTester()->withWorkingDirectory(__DIR__ . '/bin')->runOne(new Phpt(code: '<?php', expectation: Expectation::exact('')));
+
+        $logs = \glob($logDir . '/*.json') ?: [];
+        self::assertCount(1, $logs);
+        /** @var array{cwd: string} $record */
+        $record = \json_decode((string) \file_get_contents($logs[0]), true, flags: \JSON_THROW_ON_ERROR);
+        self::assertSame(\realpath(__DIR__ . '/bin'), \realpath($record['cwd']));
     }
 
     public function testRunRemovesNestedCacheContents(): void
     {
         $temporaryDirectory = $this->makeScratchDir();
         \putenv('STUB_POPULATE_CACHE=1');
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($temporaryDirectory)->withProgress(false);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($temporaryDirectory);
 
         $tester->run([
             'a' => new Phpt(code: '<?php', expectation: Expectation::exact('')),
@@ -80,7 +140,7 @@ final class PsalmTesterRunTest extends TestCase
 
     public function testRunHonorsConcurrency(): void
     {
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withArguments('')->withProgress(false)->withConcurrency(1);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withArguments()->withConcurrency(1);
         \putenv('STUB_SLEEP=0.4');
 
         $start = \microtime(true);
@@ -98,7 +158,7 @@ final class PsalmTesterRunTest extends TestCase
         $scratch = $this->makeScratchDir();
         $script = <<<'PHP'
             require $argv[1];
-            $tester = AliesDev\PsalmTester\PsalmTester::create()->withPsalm($argv[2])->withArguments('')->withProgress(false);
+            $tester = AliesDev\PsalmTester\PsalmTester::create()->withPsalm($argv[2])->withArguments();
             $tests = [];
             foreach (['a', 'b', 'c'] as $id) {
                 $tests[$id] = new AliesDev\PsalmTester\Phpt(code: '<?php', expectation: AliesDev\PsalmTester\Expectation::exact(''), arguments: '--config=' . $id);
@@ -130,38 +190,48 @@ final class PsalmTesterRunTest extends TestCase
         }
         \proc_close($process);
 
-        self::assertFalse($timedOut, 'runBatch did not finish within 30s.');
+        self::assertFalse($timedOut, 'run() did not finish within 30s.');
         self::assertSame("a=3000\nb=3000\nc=3000\n", \file_get_contents($scratch . '/stdout'));
         self::assertSame(3 << 20, \filesize($scratch . '/stderr'));
     }
 
-    public function testArgsAreAppendedToTheConfiguredArgumentsAndAnOwnConfigReplacesTheConfiguredOne(): void
+    /**
+     * @return iterable<string, array{list<string>, string, list<string>}>
+     */
+    public static function provideArgumentCompositions(): iterable
+    {
+        $configured = '--config=/configured  dir/psalm.xml';
+        yield 'ARGS appended after the configured config' => [['--base'], '--extra', ['--base', $configured, '--extra']];
+        yield 'ARGS --config= replaces it' => [['--base'], "--config=own.xml\n--extra", ['--base', '--config=own.xml', '--extra']];
+        yield 'ARGS --config <file> replaces it' => [[], '--config own.xml', ['--config', 'own.xml']];
+        yield 'ARGS -c <file> replaces it' => [[], '-c own.xml', ['-c', 'own.xml']];
+        yield 'quoted ARGS config options count' => [[], '"-c" \'strict  config.xml\'', ['-c', 'strict  config.xml']];
+        yield 'a --config inside another value does not' => [[], '--report="prefix --config=x.json"', [$configured, '--report=prefix --config=x.json']];
+        yield 'a config in withArguments() replaces it' => [['--config=/from-arguments.xml'], '--extra', ['--config=/from-arguments.xml', '--extra']];
+    }
+
+    /**
+     * @param list<string> $arguments
+     * @param list<string> $expected
+     */
+    #[DataProvider('provideArgumentCompositions')]
+    public function testPsalmGetsTheConfiguredArgumentsThenTheConfigThenTheArgsTokens(array $arguments, string $args, array $expected): void
     {
         $logDir = $this->makeScratchDir();
         \putenv('STUB_MODE=env_record');
         \putenv('STUB_ENV_LOG_DIR=' . $logDir);
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withProgress(false)
-            ->withArguments('--base-flag')->withConfig('/configured.xml');
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)
+            ->withArguments(...$arguments)->withConfig('/configured  dir/psalm.xml');
 
-        $results = $tester->run([
-            'appended' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: '--extra-flag'),
-            'own-config' => new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: "--config=own.xml\n--extra-flag"),
-        ]);
+        $result = $tester->runOne(new Phpt(code: '<?php', expectation: Expectation::exact(''), arguments: $args));
 
-        self::assertSame(Outcome::Passed, $results['appended']->outcome);
-        $argvs = [];
-        foreach (\glob($logDir . '/*.json') ?: [] as $log) {
-            /** @var array{argv: list<string>} $record */
-            $record = \json_decode((string) \file_get_contents($log), true, flags: \JSON_THROW_ON_ERROR);
-            // Drop the temp code file paths, which differ per run.
-            $argvs[] = \implode(' ', \array_filter($record['argv'], static fn(string $arg): bool => !\str_contains($arg, '/code_')));
-        }
-        \sort($argvs);
-
-        self::assertSame([
-            '--output-format=json --base-flag --config=/configured.xml --extra-flag --no-cache',
-            '--output-format=json --base-flag --config=own.xml --extra-flag --no-cache',
-        ], $argvs);
+        self::assertSame(Outcome::Passed, $result->outcome);
+        $logs = \glob($logDir . '/*.json') ?: [];
+        self::assertCount(1, $logs);
+        /** @var array{argv: list<string>} $record */
+        $record = \json_decode((string) \file_get_contents($logs[0]), true, flags: \JSON_THROW_ON_ERROR);
+        self::assertSame(['--output-format=json', ...$expected, '--no-cache'], \array_slice($record['argv'], 0, -1));
+        self::assertStringContainsString('/code_', (string) \end($record['argv']));
     }
 
     public function testRunRoutesEachFilesErrorsToItsOwnId(): void
@@ -203,7 +273,7 @@ final class PsalmTesterRunTest extends TestCase
     {
         $script = <<<'PHP'
             require $argv[1];
-            $tester = AliesDev\PsalmTester\PsalmTester::create()->withPsalm($argv[2])->withProgress(false);
+            $tester = AliesDev\PsalmTester\PsalmTester::create()->withPsalm($argv[2]);
             $test = new AliesDev\PsalmTester\Phpt(
                 code: '<?php',
                 expectation: AliesDev\PsalmTester\Expectation::format('%A'),
@@ -252,7 +322,7 @@ final class PsalmTesterRunTest extends TestCase
             self::assertSame(
                 self::normalize($alone[$id]->output),
                 self::normalize($results[$id]->output),
-                \sprintf('Batch output for "%s" differs from single-test output.', $id),
+                \sprintf('Output for "%s" differs from running it alone.', $id),
             );
         }
 
@@ -334,19 +404,7 @@ final class PsalmTesterRunTest extends TestCase
         );
     }
 
-    public function testRunThrowsRuntimeExceptionIncludingArgsOnInvalidJson(): void
-    {
-        $tester = self::createTester('--unique-marker-xyz');
 
-        \putenv('STUB_MODE=invalid_json');
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/--unique-marker-xyz/');
-
-        $tester->run([
-            'x' => new Phpt(code: '<?php', expectation: Expectation::exact('')),
-        ]);
-    }
 
     public function testRunHandlesLargeJsonOutputWithoutTruncation(): void
     {
@@ -424,7 +482,7 @@ final class PsalmTesterRunTest extends TestCase
             self::assertSame(
                 $scratchRootBefore,
                 self::listScratchCacheDirs(),
-                'Per-group cache dirs must be cleaned up after runBatch returns.',
+                'Per-group cache dirs must be cleaned up after run() returns.',
             );
         } finally {
             foreach (\glob($logDir . '/*.json') ?: [] as $file) {
@@ -440,14 +498,14 @@ final class PsalmTesterRunTest extends TestCase
         self::assertTrue(\mkdir($tempDir, 0777, true));
 
         try {
-            $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir)->withProgress(false);
+            $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir);
 
             $tester->run([
                 'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact('')),
                 'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), arguments: '--config=b'),
             ]);
 
-            self::assertSame([], \glob($tempDir . '/code_*'), 'Per-test temporary code files must be removed once runBatch returns.');
+            self::assertSame([], \glob($tempDir . '/code_*'), 'Per-test temporary code files must be removed once run() returns.');
         } finally {
             self::assertSame([], \glob($tempDir . '/*'));
             @\rmdir($tempDir);
@@ -489,8 +547,8 @@ final class PsalmTesterRunTest extends TestCase
         return $dirs;
     }
 
-    private static function createTester(string $defaultArguments = ''): PsalmTester
+    private static function createTester(string ...$arguments): PsalmTester
     {
-        return PsalmTester::create()->withPsalm(self::STUB_PATH)->withArguments($defaultArguments)->withProgress(false);
+        return PsalmTester::create()->withPsalm(self::STUB_PATH)->withArguments(...$arguments);
     }
 }

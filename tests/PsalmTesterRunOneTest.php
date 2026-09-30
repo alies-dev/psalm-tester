@@ -59,7 +59,7 @@ final class PsalmTesterRunOneTest extends TestCase
     public function testRunOneCleansUpTemporaryCodeFileOnSuccess(): void
     {
         $tempDir = $this->makeScratchDir();
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir)->withProgress(false);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir);
 
         $tester->runOne(new Phpt(
             code: '<?php // cleanup',
@@ -72,7 +72,7 @@ final class PsalmTesterRunOneTest extends TestCase
     public function testRunOneCleansUpTemporaryCodeFileOnAssertionFailure(): void
     {
         $tempDir = $this->makeScratchDir();
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir)->withProgress(false);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTemporaryDirectory($tempDir);
 
         try {
             $tester->runOne(new Phpt(code: '<?php // mismatch', expectation: Expectation::exact('')))->assert();
@@ -86,7 +86,7 @@ final class PsalmTesterRunOneTest extends TestCase
 
     public function testRunOneRunsRealPsalmAndReportsNoErrorsForCleanCode(): void
     {
-        $tester = PsalmTester::create()->withProgress(false);
+        $tester = PsalmTester::create();
 
         $tester->runOne(new Phpt(code: "<?php\n\$x = 1;\nvar_export(\$x);\n", expectation: Expectation::exact('')))->assert();
 
@@ -120,7 +120,7 @@ final class PsalmTesterRunOneTest extends TestCase
 
     public function testRunOneRunsRealPsalmAndFormatsOffsetErrorLine(): void
     {
-        $tester = PsalmTester::create()->withProgress(false);
+        $tester = PsalmTester::create();
 
         // codeFirstLine=1 here (raw code passed directly, not parsed from a .phpt file),
         // so the reported line matches the 1-indexed line inside $code verbatim.
@@ -134,7 +134,7 @@ final class PsalmTesterRunOneTest extends TestCase
 
     public function testRunOneRunsRealPsalmAndShiftsErrorLineByCodeFirstLine(): void
     {
-        $tester = PsalmTester::create()->withProgress(false);
+        $tester = PsalmTester::create();
 
         // As if $code started on line 10 of a .phpt file: line 2 of $code is reported as line 11.
         $tester->runOne(new Phpt(
@@ -150,7 +150,7 @@ final class PsalmTesterRunOneTest extends TestCase
     {
         // Older suites repeat the full default arguments in --ARGS--; they are now appended to
         // the configured ones, so Psalm sees --no-progress and --no-diff twice.
-        $result = PsalmTester::create()->withProgress(false)->runOne(new Phpt(
+        $result = PsalmTester::create()->runOne(new Phpt(
             code: "<?php\n\$unused = 1;\n",
             expectation: Expectation::format('UnusedVariable on line 2: %s'),
             arguments: '--no-progress --no-diff --config=' . \dirname(__DIR__) . '/src/psalm.xml',
@@ -159,9 +159,20 @@ final class PsalmTesterRunOneTest extends TestCase
         self::assertSame(Outcome::Passed, $result->outcome, $result->output);
     }
 
+    public function testRunOneWithRealPsalmAcceptsAConfigPassedThroughWithArguments(): void
+    {
+        // 0.3's defaultArguments carried the config; ported to withArguments() as is, the bundled
+        // default config must not be added as a second one ("Too many config files provided").
+        $result = PsalmTester::create()
+            ->withArguments('--no-progress', '--no-diff', '--config=' . \dirname(__DIR__) . '/src/psalm.xml')
+            ->runOne(new Phpt(code: "<?php\n\$unused = 1;\n", expectation: Expectation::format('UnusedVariable on line 2: %s')));
+
+        self::assertSame(Outcome::Passed, $result->outcome, (string) $result->reason . $result->output);
+    }
+
     private static function createStubTester(): PsalmTester
     {
-        return PsalmTester::create()->withPsalm(self::STUB_PATH)->withProgress(false);
+        return PsalmTester::create()->withPsalm(self::STUB_PATH);
     }
 
     private function makeScratchDir(): string

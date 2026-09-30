@@ -15,28 +15,46 @@ final class IssueFormatter
 {
     /**
      * @return array<string, list<PsalmError>> keyed by the reported file's real path
+     * @throws \UnexpectedValueException when $output is not Psalm's JSON issue list
      */
     public static function decodeByFile(string $output, string $args): array
     {
         try {
-            /** @var list<PsalmError> $errors */
             $errors = json_decode($output, true, flags: \JSON_THROW_ON_ERROR);
         } catch (\JsonException $e) {
-            throw new \RuntimeException(\sprintf(
-                "Failed to decode Psalm JSON output for args [%s]: %s\nOutput: %s",
-                $args,
-                $e->getMessage(),
-                $output,
-            ), previous: $e);
+            throw self::invalidOutput($args, $e->getMessage(), $output);
+        }
+
+        if (!\is_array($errors) || !\array_is_list($errors)) {
+            throw self::invalidOutput($args, 'not a list of issues', $output);
         }
 
         $errorsByFile = [];
 
         foreach ($errors as $error) {
+            if (!\is_array($error) || !\is_string($error['type'] ?? null) || !\is_int($error['line_from'] ?? null)
+                || !\is_int($error['column_from'] ?? null) || !\is_string($error['message'] ?? null) || !\is_string($error['file_path'] ?? null)) {
+                throw self::invalidOutput($args, 'an issue lacks type, line_from, column_from, message or file_path', $output);
+            }
+
+            /** @var PsalmError $error */
             $errorsByFile[self::fileKey($error['file_path'])][] = $error;
         }
 
         return $errorsByFile;
+    }
+
+    /**
+     * @psalm-pure
+     */
+    private static function invalidOutput(string $args, string $problem, string $output): \UnexpectedValueException
+    {
+        return new \UnexpectedValueException(\sprintf(
+            "Failed to decode Psalm JSON output for args [%s]: %s\nOutput: %s",
+            $args,
+            $problem,
+            $output === '' ? '(empty)' : \mb_strcut($output, 0, 2000),
+        ));
     }
 
     public static function fileKey(string $path): string

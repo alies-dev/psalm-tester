@@ -51,6 +51,16 @@ final class PsalmPsalmPhptTestCaseTest extends TestCase
         self::assertStringContainsString('fixture is always skipped', $output);
     }
 
+    public function testAProcessIsolatedRunPasses(): void
+    {
+        // PHPUnit fails an isolated test whose child process wrote to stderr, so the default
+        // tester must stay quiet there.
+        [$exitCode, $output] = $this->runFixture(['--process-isolation']);
+
+        self::assertSame(0, $exitCode, $output);
+        self::assertMatchesRegularExpression(self::summary(tests: 4, assertions: 3, suffix: 'Skipped: 1'), $output);
+    }
+
     public function testFilteredRunAnalyzesOnlyTheSelectedFile(): void
     {
         [$exitCode, $output] = $this->runFixture(['--filter', 'beta']);

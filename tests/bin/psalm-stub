@@ -7,7 +7,7 @@ declare(strict_types=1);
 // entries that exist on disk. Behavior comes from the environment (STUB_*), which is shared by
 // every group of a batch, or per invocation from --stub-* arguments in a group's argument string:
 //   --stub-sleep=<seconds>    overrides STUB_SLEEP
-//   --stub-mode=<mode>        overrides STUB_MODE (empty: no issues at all)
+//   --stub-mode=<mode>        overrides STUB_MODE (empty: no issues at all; no_output: prints nothing)
 //   --stub-await-pids=<n>     first wait until STUB_PID_DIR holds <n> pid files
 // STUB_PID_DIR: each invocation writes its pid there. STUB_STDERR: text written to stderr.
 // STUB_STDERR_BYTES: that many bytes written to stderr. STUB_POPULATE_CACHE: nested files
@@ -57,6 +57,10 @@ if ($mode === 'empty') {
     exit(0);
 }
 
+if ($mode === 'no_output') {
+    exit(0);
+}
+
 if ($mode === 'invalid_json') {
     \fwrite(\STDOUT, 'NOT JSON');
     exit(0);
@@ -93,6 +97,7 @@ if ($mode === 'env_record') {
             'TEMP' => (string) \getenv('TEMP'),
             'sys_get_temp_dir' => \sys_get_temp_dir(),
             'argv' => \array_slice($argv, 1),
+            'cwd' => (string) \getcwd(),
         ];
         \file_put_contents(
             $logDir . '/' . \getmypid() . '_' . \bin2hex(\random_bytes(4)) . '.json',
@@ -136,6 +141,9 @@ if ($mode === 'large') {
             ];
         }
     }
+} elseif ($mode === 'foreign_file') {
+    // An issue in a file Psalm was not asked about, as an included file would produce.
+    $errors[] = ['type' => 'ForeignError', 'line_from' => 3, 'column_from' => 1, 'message' => 'from an included file', 'file_path' => '/elsewhere/Included.php'];
 } elseif ($mode === 'echo_code') {
     // The message is the file's own code minus the open tag, so each id's output is distinct.
     foreach ($files as $file) {

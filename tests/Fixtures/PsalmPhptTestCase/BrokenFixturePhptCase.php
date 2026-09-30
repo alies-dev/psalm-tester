@@ -21,6 +21,6 @@ final class BrokenFixturePhptCase extends PsalmPhptTestCase
     #[\Override]
     protected static function tester(): PsalmTester
     {
-        return PsalmTester::create()->withPsalm(\dirname(__DIR__, 2) . '/bin/psalm-stub')->withProgress(false);
+        return PsalmTester::create()->withPsalm(\dirname(__DIR__, 2) . '/bin/psalm-stub');
     }
 }

@@ -14,9 +14,9 @@ final class PsalmTesterTimeoutTest extends TestCase
 {
     private const STUB_PATH = __DIR__ . '/bin/psalm-stub';
 
-    public function testRunBatchFailsEveryTestInATimedOutGroupWithAClearMessage(): void
+    public function testRunFailsEveryTestInATimedOutGroupWithAClearMessage(): void
     {
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withProgress(false)->withTimeout(0.3);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTimeout(0.3);
 
         $start = \microtime(true);
         $results = $tester->run([
@@ -36,9 +36,9 @@ final class PsalmTesterTimeoutTest extends TestCase
         self::assertLessThan(4.0, $elapsed, \sprintf('Expected the group to be killed well before its 5s sleep, took %.2fs.', $elapsed));
     }
 
-    public function testRunBatchLeavesOtherGroupsUnaffectedByATimeoutInOneGroup(): void
+    public function testRunLeavesOtherGroupsUnaffectedByATimeoutInOneGroup(): void
     {
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withProgress(false)->withTimeout(0.3);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTimeout(0.3);
 
         $results = $tester->run([
             'slow' => new Phpt(code: '<?php // slow', expectation: Expectation::exact(''), arguments: '--config=slow --stub-sleep=5'),
@@ -50,13 +50,13 @@ final class PsalmTesterTimeoutTest extends TestCase
         self::assertMatchesRegularExpression('/^StubError on line 1: stub error for code_\w+$/', $results['fast']->output);
     }
 
-    public function testRunBatchKillsGrandchildProcessesOfATimedOutGroup(): void
+    public function testRunKillsGrandchildProcessesOfATimedOutGroup(): void
     {
         $pidFile = \tempnam(\sys_get_temp_dir(), 'psalm_tester_grandchild_pid_');
         self::assertNotFalse($pidFile);
         @\unlink($pidFile); // the stub creates it; start from "doesn't exist yet"
 
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withProgress(false)->withTimeout(0.3);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTimeout(0.3);
 
         try {
             \putenv('STUB_MODE=spawn_grandchild');
@@ -91,9 +91,9 @@ final class PsalmTesterTimeoutTest extends TestCase
         }
     }
 
-    public function testRunBatchDoesNotTimeOutWhenTimeoutSecondsIsNull(): void
+    public function testRunDoesNotTimeOutWhenNoTimeoutIsSet(): void
     {
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withProgress(false);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH);
 
         $results = $tester->run([
             'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact('')),

@@ -20,7 +20,7 @@ final class SkipifEvaluator
      * @param ?array<string, string> $env
      * @return array<TKey, ?string>
      */
-    public static function evaluate(array $scriptsById, int $concurrency, ?string $workingDirectory = null, ?array $env = null): array
+    public static function evaluate(array $scriptsById, int $concurrency, string $temporaryDirectory, ?string $workingDirectory = null, ?array $env = null): array
     {
         /** @var array<TKey, ?string> */
         $results = [];
@@ -31,7 +31,7 @@ final class SkipifEvaluator
 
         try {
             foreach ($scriptsById as $id => $script) {
-                $scriptFile = self::writeScript($script, $id);
+                $scriptFile = self::writeScript($temporaryDirectory, $script, $id);
                 $scriptFiles[] = $scriptFile;
                 $jobs[$id] = ['command' => [\PHP_BINARY, $scriptFile], 'cwd' => $workingDirectory];
 
@@ -43,7 +43,7 @@ final class SkipifEvaluator
             ProcessRunner::run(
                 $jobs,
                 $concurrency,
-                \sys_get_temp_dir(),
+                $temporaryDirectory,
                 static function (int|string $id, ?string $output) use (&$results): void {
                     $output = \trim((string) $output);
                     /** @var TKey $id */
@@ -59,9 +59,9 @@ final class SkipifEvaluator
         return $results;
     }
 
-    private static function writeScript(string $script, int|string $id): string
+    private static function writeScript(string $temporaryDirectory, string $script, int|string $id): string
     {
-        $scriptFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
+        $scriptFile = \tempnam($temporaryDirectory, 'psalm_skipif_');
 
         if ($scriptFile === false) {
             throw new \RuntimeException(\sprintf('Failed to create temporary SKIPIF file for %s.', $id));

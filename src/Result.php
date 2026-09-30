@@ -12,6 +12,7 @@ use PHPUnit\Framework\Assert;
 final readonly class Result
 {
     /**
+     * @internal build Results with fromAnalysis(), skipped() or error(), which keep outcome and output consistent
      * @param list<Issue> $issues
      * @psalm-mutation-free
      */
@@ -24,6 +25,7 @@ final readonly class Result
     ) {}
 
     /**
+     * @internal
      * @param list<Issue> $issues
      */
     public static function fromAnalysis(Phpt $phpt, string $output, array $issues): self
@@ -31,6 +33,24 @@ final readonly class Result
         $passed = $phpt->expectation->constraint()->evaluate($output, '', true) === true;
 
         return new self($phpt, $passed ? Outcome::Passed : Outcome::Failed, $output, $issues);
+    }
+
+    /**
+     * @internal
+     * @psalm-pure
+     */
+    public static function skipped(Phpt $phpt, string $reason): self
+    {
+        return new self($phpt, Outcome::Skipped, reason: $reason);
+    }
+
+    /**
+     * @internal
+     * @psalm-pure
+     */
+    public static function error(Phpt $phpt, string $reason): self
+    {
+        return new self($phpt, Outcome::Error, reason: $reason);
     }
 
     /**
