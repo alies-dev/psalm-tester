@@ -12,6 +12,9 @@ use PHPUnit\Framework\Assert;
  */
 final readonly class PsalmTester
 {
+    /**
+     * @psalm-mutation-free
+     */
     private function __construct(
         private string $psalmPath,
         private string $defaultArguments,
@@ -385,6 +388,7 @@ final readonly class PsalmTester
 
     /**
      * @return list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>
+     * @psalm-mutation-free
      */
     private function decodeOutput(string $output, string $args): array
     {

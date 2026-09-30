@@ -10,7 +10,6 @@ use PHPUnit\Framework\Constraint\StringMatchesFormatDescription;
 
 /**
  * @api
- * @psalm-immutable
  * @psalm-type PhptSections = array<non-empty-string, array{string, positive-int}>
  */
 final readonly class PsalmTest
@@ -25,6 +24,7 @@ final readonly class PsalmTest
 
     /**
      * @param positive-int $codeFirstLine
+     * @psalm-mutation-free
      */
     public function __construct(
         public string $code,
@@ -139,6 +139,7 @@ final readonly class PsalmTest
 
     /**
      * @return PhptSections
+     * @psalm-pure
      */
     private static function parsePhpt(string $phptFile): array
     {
