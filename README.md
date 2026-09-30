@@ -6,7 +6,7 @@
 [![type-coverage](https://shepherd.dev/github/alies-dev/psalm-tester/coverage.svg)](https://shepherd.dev/github/alies-dev/psalm-tester)
 
 Regression tests for what Psalm reports, written as `.phpt` files and run by PHPUnit.
-Each file holds a PHP snippet and the exact issues (or traced types) Psalm must report for it.
+Each file holds a PHP snippet and the exact issues Psalm must report for it, type assertions included.
 It is built for authors of Psalm plugins and stubs, who need to pin inferred types and issues
 without hand-writing a PHPUnit test and a Psalm invocation per case.
 
@@ -26,11 +26,12 @@ A fixture, `tests/Psalm/phpt/array_values.phpt`:
 --FILE--
 <?php
 
-/** @psalm-trace $_list */
 $_list = array_values(['a' => 1, 'b' => 2]);
+/** @psalm-check-type-exact $_list = non-empty-list<1|2> */
 --EXPECT--
-Trace on line 5: $_list: non-empty-list<1|2>
 ```
+
+The empty `--EXPECT--` means "Psalm reports no issues", so the test passes exactly when the inferred type matches.
 
 A test case, `tests/Psalm/PsalmTest.php`:
 
@@ -65,25 +66,36 @@ Do not pass a directory holding fixtures on the command line (`vendor/bin/phpuni
 runs every `.phpt` file as its own PHPT test, executing the code instead of analyzing it. A `<directory>` in
 `phpunit.xml` is safe, since it collects only `*Test.php` by default.
 
+Had the tag said `list<int>`, the test would fail with:
+
+```
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-''
++'CheckType on line 5: Checked variable $_list = list<int> does not match $_list = non-empty-list<1|2>'
+```
+
 ## Writing fixtures
 
-The expectation is one `<IssueType> on line <n>: <message>` line per issue, sorted by line and column. Line numbers
-count from the top of the `.phpt` file. An empty expectation means "no issues".
+The expectation is one `<IssueType> on line <n>: <message>` line per issue, sorted by line and column, with line
+numbers counted from the top of the `.phpt` file. The default config ([src/psalm.xml](src/psalm.xml)) is strict
+(`errorLevel="1"`, `findUnusedCode`, ...), hence `$_list`: an unread `$list` would add an `UnusedVariable` issue.
 
-The default config ([src/psalm.xml](src/psalm.xml)) is strict (`errorLevel="1"`, `findUnusedCode`,
-`reportMixedIssues`, ...). That is why the examples name variables `$_list`: a plain `$list` that is never read adds
-an `UnusedVariable` issue.
+### Writing type assertions
 
-Assert a type without printing it, with [`@psalm-check-type-exact`](https://psalm.dev/docs/annotating_code/supported_annotations/):
+[`@psalm-check-type-exact`](https://psalm.dev/docs/annotating_code/supported_annotations/) compares types
+semantically: `1|2` equals `2|1`, but `list<int>` differs from `non-empty-list<int>`. Unlike a traced type, it does
+not depend on how a Psalm version prints types.
 
-```phpt
---FILE--
-<?php
+- Put the tag on its own line right after the statement that sets the variable, at top level or inside a function
+  body. On a class or method docblock it is silently ignored.
+- The variable must exist at that point, or Psalm reports `InvalidDocblock`.
+- To find the type, add `/** @psalm-trace $x */` temporarily, copy the traced type into the tag, remove the trace.
+- Plain `@psalm-check-type` only checks that the actual type is contained in the given one.
 
-$_list = array_values(['a' => 1, 'b' => 2]);
-/** @psalm-check-type-exact $_list = non-empty-list<1|2> */
---EXPECT--
-```
+### Other expectations
 
 Leave out what should not be pinned, such as a line number that shifts when the fixture is edited:
 
@@ -108,16 +120,14 @@ Psalm does not evaluate explode() on literal strings
 --FILE--
 <?php
 
-/** @psalm-trace $_parts */
 $_parts = explode(',', 'a,b');
+/** @psalm-check-type-exact $_parts = list{'a', 'b'} */
 --EXPECT--
-Trace on line 11: $_parts: list{'a', 'b'}
 ```
 
 It reports as incomplete while the output mismatches, and fails once it matches, so a stale `--XFAIL--` gets removed.
 
-Fixtures with the same arguments are analyzed in one Psalm run and share one symbol table: keep class and function
-names unique across them, or Psalm reports `DuplicateClass` or `DuplicateFunction`.
+Fixtures with the same arguments share one Psalm run and symbol table, so keep class and function names unique.
 
 ## Supported phpt sections
 
