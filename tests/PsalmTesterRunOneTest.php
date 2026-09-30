@@ -20,20 +20,6 @@ final class PsalmTesterRunOneTest extends TestCase
 {
     private const STUB_PATH = __DIR__ . '/bin/psalm-stub';
 
-    /** @var list<string> */
-    private array $scratchDirs = [];
-
-    protected function tearDown(): void
-    {
-        foreach ($this->scratchDirs as $dir) {
-            foreach (\glob($dir . '/*') ?: [] as $leftover) {
-                @\unlink($leftover);
-            }
-            @\rmdir($dir);
-        }
-        $this->scratchDirs = [];
-    }
-
     public function testRunOnePassesWhenOutputMatchesConstraint(): void
     {
         $tester = self::createStubTester();
@@ -123,14 +109,5 @@ final class PsalmTesterRunOneTest extends TestCase
     private static function createStubTester(): PsalmTester
     {
         return PsalmTester::create()->withPsalm(self::STUB_PATH);
-    }
-
-    private function makeScratchDir(): string
-    {
-        $dir = \sys_get_temp_dir() . '/psalm_tester_test_method_' . \bin2hex(\random_bytes(4));
-        self::assertTrue(\mkdir($dir, 0777, true));
-        $this->scratchDirs[] = $dir;
-
-        return $dir;
     }
 }
