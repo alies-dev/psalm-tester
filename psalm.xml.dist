@@ -42,7 +42,6 @@
         <MissingPureAnnotation errorLevel="suppress"/>
         <MissingImmutableAnnotation errorLevel="suppress"/>
         <MissingAbstractPureAnnotation errorLevel="suppress"/>
-        <MixedAssignment errorLevel="suppress"/>
     </issueHandlers>
 
     <forbiddenFunctions>

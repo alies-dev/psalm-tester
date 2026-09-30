@@ -501,13 +501,13 @@ final readonly class PsalmTester
         // Best-effort cleanup: this runs from analyze()'s finally, so an iterator
         // failure here must not mask the original exception.
         try {
+            /** @var \Iterator<array-key, \SplFileInfo> */
             $iterator = new \RecursiveIteratorIterator(
                 new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
                 \RecursiveIteratorIterator::CHILD_FIRST,
             );
 
             foreach ($iterator as $entry) {
-                /** @var \SplFileInfo $entry */
                 if ($entry->isDir() && !$entry->isLink()) {
                     @\rmdir($entry->getPathname());
                 } else {
