@@ -11,7 +11,7 @@ namespace AliesDev\PsalmTester;
 final class PhptParser
 {
     /** TEST is php-src's description section: accepted, not used. */
-    private const SUPPORTED = ['TEST', 'SKIPIF', 'XFAIL', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF'];
+    private const SUPPORTED = ['TEST', 'SKIPIF', 'XFAIL', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'CONFLICTS'];
 
     /** Real run-tests.php sections whose semantics psalm-tester does not implement. */
     private const NOT_SUPPORTED = ['CLEAN', 'ENV', 'INI', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];

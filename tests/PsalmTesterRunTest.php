@@ -368,6 +368,69 @@ final class PsalmTesterRunTest extends TestCase
         self::assertContains(['<?php // d'], $invocations);
     }
 
+    public function testAConflictsFixtureGetsItsOwnPsalmInvocation(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        // Same (default) --ARGS-- as 'plain', so without --CONFLICTS-- these would share a run.
+        self::createTester()->run([
+            'conflicting' => new Phpt(code: '<?php // conflicting', expectation: Expectation::exact(''), conflicts: ['key']),
+            'plain' => new Phpt(code: '<?php // plain', expectation: Expectation::exact('')),
+        ]);
+
+        $invocations = \array_map(
+            static function (string $log): array {
+                /** @var list<string> $contents */
+                $contents = \json_decode((string) \file_get_contents($log), true);
+                \sort($contents);
+
+                return $contents;
+            },
+            \glob($logDir . '/*.json') ?: [],
+        );
+
+        self::assertCount(2, $invocations);
+        self::assertContains(['<?php // conflicting'], $invocations);
+        self::assertContains(['<?php // plain'], $invocations);
+    }
+
+    public function testTwoFixturesSharingAConflictsKeyNeverRunConcurrently(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_SLEEP=0.3');
+
+        $start = \microtime(true);
+        $results = $tester->run([
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), conflicts: ['shared']),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), conflicts: ['shared']),
+        ]);
+        $elapsed = \microtime(true) - $start;
+
+        self::assertGreaterThanOrEqual(0.55, $elapsed, \sprintf('Expected two 0.3s runs to serialize (>= 0.6s), got %.2fs.', $elapsed));
+        self::assertSame(['a', 'b'], \array_keys($results), 'One Result per input, in input order.');
+    }
+
+    public function testAllConflictsKeyRunsWithNothingElseInFlight(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_SLEEP=0.3');
+
+        $start = \microtime(true);
+        $results = $tester->run([
+            'exclusive' => new Phpt(code: '<?php // x', expectation: Expectation::exact(''), conflicts: ['all']),
+            // No --CONFLICTS--, same (default) --ARGS--: 'a' and 'b' would merge into one group,
+            // giving two Psalm invocations total, both of which must stay clear of 'exclusive'.
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact('')),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact('')),
+        ]);
+        $elapsed = \microtime(true) - $start;
+
+        self::assertGreaterThanOrEqual(0.55, $elapsed, \sprintf('Expected the exclusive run to serialize with the rest (>= 0.6s), got %.2fs.', $elapsed));
+        self::assertSame(['exclusive', 'a', 'b'], \array_keys($results));
+    }
+
     public function testRunGivesEachGroupIsolatedCacheDirAndCleansUp(): void
     {
         $tempDir = $this->makeScratchDir();

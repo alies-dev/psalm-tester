@@ -229,11 +229,18 @@ final readonly class PsalmTester
                 $file = self::createTemporaryCodeFile($temporaryDirectory, $phpt->code);
                 $tempFiles[] = $file;
                 $key = \implode("\0", self::groupKeyTokens($argv));
+
+                // --CONFLICTS--: never co-analyzed with another test, conflicting or not, so it
+                // needs a group key nothing else can share, regardless of matching arguments.
+                if ($phpt->conflicts !== []) {
+                    $key .= "\0conflicts:" . (string) $id;
+                }
+
                 $groups[$key]['argv'] = $argv;
                 $groups[$key]['entries'][$id] = ['file' => $file, 'phpt' => $phpt];
             }
 
-            /** @var array<string, array{command: non-empty-list<string>, env: array<string, string>, cwd: ?string}> */
+            /** @var array<string, array{command: non-empty-list<string>, env: array<string, string>, cwd: ?string, conflicts: list<string>}> */
             $jobs = [];
 
             foreach ($groups as $key => $group) {
@@ -243,10 +250,17 @@ final readonly class PsalmTester
                 // sys_get_temp_dir() (e.g. psalm-plugin-laravel's Plugin::getCacheLocation()).
                 $cacheDir = self::createGroupCacheDir($temporaryDirectory);
                 $cacheDirs[] = $cacheDir;
+                $conflicts = [];
+
+                foreach ($group['entries'] as $entry) {
+                    $conflicts = [...$conflicts, ...$entry['phpt']->conflicts];
+                }
+
                 $jobs[$key] = [
                     'command' => self::buildCommand($psalm, $group),
                     'env' => ['XDG_CACHE_HOME' => $cacheDir, 'TMPDIR' => $cacheDir, 'TMP' => $cacheDir, 'TEMP' => $cacheDir] + $env,
                     'cwd' => $this->options['workingDirectory'],
+                    'conflicts' => $conflicts,
                 ];
             }
 
