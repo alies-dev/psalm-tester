@@ -66,11 +66,15 @@ final readonly class PsalmTester
      * Arguments for every Psalm run, one per parameter, passed as is (no shell); default
      * --no-progress --no-diff. A test's --ARGS-- are appended to them.
      *
+     * @throws \InvalidArgumentException for -f or a path: the tester passes the files to analyze itself
      * @psalm-mutation-free
      */
     public function withArguments(string ...$args): self
     {
-        return new self(['arguments' => \array_values($args)] + $this->options);
+        $args = \array_values($args);
+        self::assertNoAnalysisTargets($args);
+
+        return new self(['arguments' => $args] + $this->options);
     }
 
     /**
@@ -335,9 +339,16 @@ final readonly class PsalmTester
 
         try {
             foreach ($phpts as $id => $phpt) {
+                try {
+                    $argv = $this->effectiveArguments($phpt);
+                } catch (\InvalidArgumentException $e) {
+                    $results[$id] = Result::error($phpt, \sprintf('Invalid --ARGS--: %s', $e->getMessage()));
+
+                    continue;
+                }
+
                 $file = self::createTemporaryCodeFile($temporaryDirectory, $phpt->code);
                 $tempFiles[] = $file;
-                $argv = $this->effectiveArguments($phpt);
                 $key = \implode("\0", $argv);
                 $groups[$key]['argv'] = $argv;
                 $groups[$key]['entries'][$id] = ['file' => $file, 'phpt' => $phpt];
@@ -364,11 +375,11 @@ final readonly class PsalmTester
                 $jobs,
                 $concurrency,
                 $temporaryDirectory,
-                function (string $key, ?string $output) use ($groups, &$results): void {
+                function (string $key, ?string $output, int $exitCode, ?int $signal) use ($groups, &$results): void {
                     $group = $groups[$key];
                     $args = \implode(' ', $group['argv']);
 
-                    foreach ($this->groupResults($group, $args, $output) as $id => $result) {
+                    foreach ($this->groupResults($group, $args, $output, $exitCode, $signal) as $id => $result) {
                         /** @var TKey $id */
                         $results[$id] = $result;
                     }
@@ -397,13 +408,25 @@ final readonly class PsalmTester
      * @param ?string $output null when the run timed out
      * @return array<array-key, Result>
      */
-    private function groupResults(array $group, string $args, ?string $output): array
+    private function groupResults(array $group, string $args, ?string $output, int $exitCode, ?int $signal): array
     {
         $entries = $group['entries'];
 
         try {
             if ($output === null) {
                 throw new \UnexpectedValueException(\sprintf('PsalmTimeout: group [%s] did not finish within %.1fs and was terminated.', $args, (float) $this->options['timeout']));
+            }
+
+            // Psalm exits 0 (no issues) or 2 (issues found) after a full analysis; anything else
+            // (1 for its own usage/config errors, 255 for a fatal error, a signal) means the
+            // output, even a clean "[]", does not describe the tested code.
+            if ($signal !== null || ($exitCode !== 0 && $exitCode !== 2)) {
+                throw new \UnexpectedValueException(\sprintf(
+                    "Psalm %s for group [%s].\nOutput: %s",
+                    $signal !== null ? \sprintf('was killed by signal %d', $signal) : \sprintf('exited with exit code %d', $exitCode),
+                    $args,
+                    $output === '' ? '(empty)' : \substr($output, 0, 2000),
+                ));
             }
 
             $errorsByFile = IssueFormatter::decodeByFile($output, $args);
@@ -450,6 +473,7 @@ final readonly class PsalmTester
     private function effectiveArguments(Phpt $phpt): array
     {
         $testArgs = ArgumentTokenizer::tokenize($phpt->arguments);
+        self::assertNoAnalysisTargets($testArgs);
         $args = $this->options['arguments'];
 
         if (self::hasConfigOption($testArgs)) {
@@ -459,6 +483,51 @@ final readonly class PsalmTester
         }
 
         return [...$args, ...$testArgs];
+    }
+
+    /**
+     * Rejects what would change which files Psalm analyzes: -f (alone or clustered, e.g. -mf) and
+     * anything Psalm's CliUtils::getPathsToCheck() (Psalm 6 and 7) reads as a path, i.e. a word
+     * that is not the value of -c, -r, --config, --printer or --root ("-" means stdin). Psalm
+     * would then ignore or add to the test's own code file, so an empty expectation could pass.
+     *
+     * @param list<string> $args
+     * @throws \InvalidArgumentException
+     * @psalm-pure
+     */
+    private static function assertNoAnalysisTargets(array $args): void
+    {
+        for ($i = 0, $count = \count($args); $i < $count; ++$i) {
+            $arg = $args[$i];
+            $isTarget = $arg === '' || $arg === '-' || $arg[0] !== '-';
+
+            if (!$isTarget && !\str_starts_with($arg, '--')) {
+                // A short option cluster: m, h, v, i take no value; c, f, r take the rest or the next word.
+                for ($j = 1, $length = \strlen($arg); $j < $length; ++$j) {
+                    if ($arg[$j] === 'f') {
+                        $isTarget = true;
+
+                        break;
+                    }
+
+                    if ($arg[$j] === 'c' || $arg[$j] === 'r') {
+                        $i += $j === $length - 1 ? 1 : 0;
+
+                        break;
+                    }
+
+                    if (!\in_array($arg[$j], ['m', 'h', 'v', 'i'], true)) {
+                        break;
+                    }
+                }
+            } elseif (\in_array($arg, ['--config', '--printer', '--root'], true)) {
+                ++$i;
+            }
+
+            if ($isTarget) {
+                throw new \InvalidArgumentException(\sprintf('"%s" would change the files to analyze, which psalm-tester passes itself.', $arg));
+            }
+        }
     }
 
     /**

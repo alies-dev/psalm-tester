@@ -19,6 +19,11 @@ final class IssueFormatter
      */
     public static function decodeByFile(string $output, string $args): array
     {
+        // Decoding to arrays would turn {} into the same [] as an empty issue list.
+        if (!\str_starts_with(\ltrim($output), '[')) {
+            throw self::invalidOutput($args, 'not a list of issues', $output);
+        }
+
         try {
             $errors = json_decode($output, true, flags: \JSON_THROW_ON_ERROR);
         } catch (\JsonException $e) {
