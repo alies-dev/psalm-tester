@@ -81,10 +81,16 @@ final class ResultTest extends TestCase
     {
         $phpt = new Phpt(code: '<?php', expectation: Expectation::exact(''), xfail: 'known limitation', path: $path);
 
-        $this->expectException(AssertionFailedError::class);
-        $this->expectExceptionMessage("XPASS: {$label} now matches its expectation; remove --XFAIL-- (known limitation)");
-
-        (new Result($phpt, Outcome::XPassed, reason: 'known limitation'))->assert();
+        try {
+            (new Result($phpt, Outcome::XPassed, reason: 'known limitation'))->assert();
+            self::fail('Expected an AssertionFailedError.');
+        } catch (AssertionFailedError $e) {
+            // Exact class, not instanceof: IncompleteTestError and SkippedWithMessageException
+            // are themselves AssertionFailedError subclasses, so expectException() here would
+            // also accept assert() marking XPASS incomplete or skipped instead of failing it.
+            self::assertSame(AssertionFailedError::class, $e::class);
+            self::assertSame("XPASS: {$label} now matches its expectation; remove --XFAIL-- (known limitation)", $e->getMessage());
+        }
     }
 
     private static function phpt(Expectation $expectation, ?string $xfail = null): Phpt

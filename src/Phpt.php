@@ -19,6 +19,9 @@ final readonly class Phpt
      * @param ?string $skipif the --SKIPIF-- script, if any
      * @param ?string $xfail the --XFAIL-- reason, if any: the test is expected to fail its expectation
      * @param string $path the .phpt file this was parsed from ('' when built in code)
+     * @param list<string> $conflicts --CONFLICTS-- keys, one per line: this test is never
+     *     analyzed at the same time as another test sharing one of them; "all" excludes every
+     *     other test, conflicting or not, while it runs
      */
     public function __construct(
         public string $code,
@@ -28,6 +31,7 @@ final readonly class Phpt
         public ?string $skipif = null,
         public ?string $xfail = null,
         public string $path = '',
+        public array $conflicts = [],
     ) {}
 
     /**
@@ -55,7 +59,26 @@ final readonly class Phpt
             skipif: $sections['SKIPIF'][0] ?? null,
             xfail: isset($sections['XFAIL']) ? \rtrim($sections['XFAIL'][0]) : null,
             path: $path,
+            conflicts: self::parseConflicts($sections['CONFLICTS'][0] ?? ''),
         );
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function parseConflicts(string $text): array
+    {
+        $keys = [];
+
+        foreach (\explode("\n", $text) as $line) {
+            $line = \trim($line);
+
+            if ($line !== '') {
+                $keys[] = $line;
+            }
+        }
+
+        return $keys;
     }
 
     /**

@@ -56,6 +56,37 @@ final class PsalmTesterRunOneTest extends TestCase
         $tester->runOne(new Phpt(code: '<?php // mismatch', expectation: Expectation::exact('')))->assert();
     }
 
+    public function testAFailedAssertionShowsTheStructuredMissingAndUnexpectedReport(): void
+    {
+        $tester = self::createStubTester()->withArguments('--stub-mode=echo_code');
+
+        try {
+            // The stub reports one StubError on line 1 with the code itself as the message; this
+            // expectation names a different type, so that issue is unexpected and something else
+            // is missing.
+            $tester->runOne(new Phpt(
+                code: '<?php // hello',
+                expectation: Expectation::exact('SomeOtherType on line 5: expected but never happens'),
+            ))->assert();
+            self::fail('Expected an ExpectationFailedException.');
+        } catch (ExpectationFailedException $e) {
+            self::assertStringContainsString('missing     SomeOtherType: expected but never happens', $e->getMessage());
+            self::assertStringContainsString('unexpected  line 1  StubError: // hello', $e->getMessage());
+            self::assertStringContainsString('| <?php // hello', $e->getMessage());
+        }
+    }
+
+    public function testAnUnparseableExpectationStillFailsWithoutAReport(): void
+    {
+        $tester = self::createStubTester();
+
+        // Free-form text: FailureReport::build() cannot parse it, so the message passed to
+        // assertThat() is empty; the constraint itself must still fail regardless.
+        $this->expectException(ExpectationFailedException::class);
+
+        $tester->runOne(new Phpt(code: '<?php // mismatch', expectation: Expectation::exact('not psalm-issue-shaped text')))->assert();
+    }
+
     public function testRunOneRunsRealPsalmAndReportsNoErrorsForCleanCode(): void
     {
         $tester = PsalmTester::create();

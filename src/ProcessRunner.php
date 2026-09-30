@@ -11,7 +11,7 @@ namespace AliesDev\PsalmTester;
  * early is not mistaken for a finished one. Completion is detected by polling proc_get_status().
  *
  * @internal
- * @psalm-type Job = array{command: non-empty-list<string>, env?: array<string, string>, cwd?: ?string}
+ * @psalm-type Job = array{command: non-empty-list<string>, env?: array<string, string>, cwd?: ?string, conflicts?: list<string>}
  * @psalm-type LiveProcess = array{process: resource, stdoutFile: string, startedAt: float}
  */
 final class ProcessRunner
@@ -39,7 +39,12 @@ final class ProcessRunner
         try {
             while ($queue !== [] || $live !== []) {
                 while ($queue !== [] && \count($live) < $concurrency) {
-                    $id = \array_key_first($queue);
+                    $id = self::nextRunnable($queue, $live, $jobs);
+
+                    if ($id === null) {
+                        break;
+                    }
+
                     $job = $queue[$id];
                     unset($queue[$id]);
                     $live[$id] = self::start($job, $temporaryDirectory);
@@ -79,6 +84,43 @@ final class ProcessRunner
                 @\unlink($proc['stdoutFile']);
             }
         }
+    }
+
+    /**
+     * The first queued job whose conflicts (php-src phpt --CONFLICTS--) clash with nothing
+     * currently live: a shared key never runs twice at once, and "all" runs only when nothing
+     * else is live, and lets nothing else start while it is. Null when every queued job clashes
+     * with something live right now; the caller waits for a live job to finish and asks again.
+     *
+     * @template TKey of array-key
+     * @param array<TKey, Job> $queue
+     * @param array<TKey, LiveProcess> $live
+     * @param array<TKey, Job> $jobs
+     * @return ?TKey
+     */
+    private static function nextRunnable(array $queue, array $live, array $jobs): int|string|null
+    {
+        $busy = [];
+
+        foreach (\array_keys($live) as $id) {
+            foreach ($jobs[$id]['conflicts'] ?? [] as $key) {
+                $busy[$key] = true;
+            }
+        }
+
+        foreach ($queue as $id => $job) {
+            $keys = $job['conflicts'] ?? [];
+
+            if ($live !== [] && (isset($busy['all']) || \in_array('all', $keys, true))) {
+                continue;
+            }
+
+            if (\array_intersect($keys, \array_keys($busy)) === []) {
+                return $id;
+            }
+        }
+
+        return null;
     }
 
     /**
