@@ -136,7 +136,7 @@ malformed `--ARGS--` (e.g. an unterminated quote), give only that test `Outcome:
 | Method | Default |
 |---|---|
 | `withPsalm(string $binary)` | the `vimeo/psalm` binary installed via Composer |
-| `withConfig(string $psalmXml)` | the minimal [psalm.xml](src/psalm.xml) shipped with this package |
+| `withConfig(string $psalmXml)` | the strict [psalm.xml](src/psalm.xml) shipped with this package (errorLevel 1, findUnusedCode) |
 | `withArguments(string ...$args)` | `'--no-progress', '--no-diff'`; one argument per parameter |
 | `withTimeout(?float $seconds)` | `null` (no timeout) |
 | `withConcurrency(int $n)` | one per CPU core; bounds SKIPIF scripts and Psalm runs |
@@ -161,7 +161,7 @@ $results = PsalmTester::create()->run([
 ]);
 
 $result = $results['values'];
-$result->outcome;  // Outcome::Passed, Failed, Skipped or Error
+$result->outcome;  // Outcome::Passed, Failed, Skipped, Updated or Error
 $result->output;   // "Trace on line 5: $_list: non-empty-list<1|2>"
 $result->issues;   // list<Issue>, each with type, line, column and message
 $result->reason;   // why it was skipped or errored, else null
@@ -239,7 +239,7 @@ an external file has no single "actual output" to substitute), [`--XFAIL--`](#ex
 `Outcome::XFailed` with their own reason when they fail as expected), output with a line that
 would read as a section header, a file that changed since it was parsed (`changed during the run`: an edit made while
 Psalm ran is never overwritten, and the output described the old code anyway), or a file the rewriter cannot place
-(e.g. a second `--EXPECT--` section). The same file listed twice in one run is written once. Such a failure affects only that file; the rest of the run continues.
+(e.g. its `--EXPECT--` section was removed after parsing). The same file listed twice in one run is written once. Such a failure affects only that file; the rest of the run continues.
 
 With `withProgress(true)`, each `updated: <path>` and `not updated: ...` line is also printed on STDERR. Without it
 update mode prints nothing, so it works under PHPUnit's `--process-isolation`.
