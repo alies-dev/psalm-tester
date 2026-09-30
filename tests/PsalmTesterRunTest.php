@@ -23,6 +23,7 @@ final class PsalmTesterRunTest extends TestCase
         \putenv('STUB_SLEEP');
         \putenv('STUB_MODE');
         \putenv('STUB_ENV_LOG_DIR');
+        \putenv('STUB_CONTENTS_LOG_DIR');
         \putenv('STUB_POPULATE_CACHE');
 
         foreach ($this->scratchDirs as $dir) {
@@ -333,6 +334,39 @@ final class PsalmTesterRunTest extends TestCase
     }
 
 
+
+    public function testGroupKeyIgnoresArgumentOrderOnlyWhenEveryTokenIsSelfContained(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        self::createTester()->run([
+            // Reordered but equivalent (both self-contained): one shared Psalm run.
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), arguments: '--threads=1 --no-cache'),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), arguments: '--no-cache --threads=1'),
+            // --config takes a separate value: reordering it relative to --no-cache must not
+            // merge it with the group above, nor with the other position below.
+            'c' => new Phpt(code: '<?php // c', expectation: Expectation::exact(''), arguments: '--config psalm-other.xml --no-cache'),
+            'd' => new Phpt(code: '<?php // d', expectation: Expectation::exact(''), arguments: '--no-cache --config psalm-other.xml'),
+        ]);
+
+        $invocations = \array_map(
+            static function (string $log): array {
+                /** @var list<string> $contents */
+                $contents = \json_decode((string) \file_get_contents($log), true);
+                \sort($contents);
+
+                return $contents;
+            },
+            \glob($logDir . '/*.json') ?: [],
+        );
+
+        self::assertCount(3, $invocations, 'a+b share a run; c and d each stay their own.');
+        self::assertContains(['<?php // a', '<?php // b'], $invocations);
+        self::assertContains(['<?php // c'], $invocations);
+        self::assertContains(['<?php // d'], $invocations);
+    }
 
     public function testRunGivesEachGroupIsolatedCacheDirAndCleansUp(): void
     {

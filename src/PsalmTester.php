@@ -183,7 +183,7 @@ final readonly class PsalmTester
 
         foreach ($phpts as $phpt) {
             try {
-                $keys[\implode("\0", $this->effectiveArguments($phpt))] = true;
+                $keys[\implode("\0", self::groupKeyTokens($this->effectiveArguments($phpt)))] = true;
             } catch (\InvalidArgumentException) {
                 // Invalid --ARGS--: run() gives it its own error result, no Psalm process for it.
             }
@@ -228,7 +228,7 @@ final readonly class PsalmTester
 
                 $file = self::createTemporaryCodeFile($temporaryDirectory, $phpt->code);
                 $tempFiles[] = $file;
-                $key = \implode("\0", $argv);
+                $key = \implode("\0", self::groupKeyTokens($argv));
                 $groups[$key]['argv'] = $argv;
                 $groups[$key]['entries'][$id] = ['file' => $file, 'phpt' => $phpt];
             }
@@ -356,6 +356,26 @@ final readonly class PsalmTester
         }
 
         return [...$args, ...$testArgs];
+    }
+
+    /**
+     * Sorted, so argument order alone never splits one group into two, unless a token takes a
+     * separate value (--config x, -c x, --root x, -r x, --printer x): moving such a token away
+     * from the value after it would change what Psalm sees, so the original order is kept as is.
+     * Duplicates are never removed either way.
+     *
+     * @param list<string> $args
+     * @return list<string>
+     */
+    private static function groupKeyTokens(array $args): array
+    {
+        if (\array_intersect($args, ['--config', '--root', '--printer', '-c', '-r']) !== []) {
+            return $args;
+        }
+
+        \sort($args, \SORT_STRING);
+
+        return $args;
     }
 
     /**
