@@ -11,24 +11,26 @@ namespace AliesDev\PsalmTester;
  * early is not mistaken for a finished one. Completion is detected by polling proc_get_status().
  *
  * @internal
- * @psalm-type Job = array{command: string|non-empty-list<string>, env?: array<string, string>}
- * @psalm-type LiveProcess = array{process: resource, stdoutFile: string}
+ * @psalm-type Job = array{command: string|non-empty-list<string>, env?: array<string, string>, cwd?: ?string}
+ * @psalm-type LiveProcess = array{process: resource, stdoutFile: string, startedAt: float}
  */
 final class ProcessRunner
 {
     private const POLL_INTERVAL_MICROSECONDS = 5_000;
 
     /**
-     * Calls $onComplete(id, stdout) as each job exits, in completion order. If anything throws
+     * Calls $onComplete(id, stdout, exit code, terminating signal or null) as each job exits, in
+     * completion order; stdout is null (exit code -1) for a job killed with its whole process tree
+     * after running $timeoutSeconds. If anything throws
      * (a failed start, or $onComplete itself), every still-running child is killed and its
      * temporary file removed before the exception propagates.
      *
      * @template TKey of array-key
      * @param array<TKey, Job> $jobs
      * @param positive-int $concurrency
-     * @param callable(TKey, string): void $onComplete
+     * @param callable(TKey, ?string, int, ?int): void $onComplete
      */
-    public static function run(array $jobs, int $concurrency, string $temporaryDirectory, callable $onComplete): void
+    public static function run(array $jobs, int $concurrency, string $temporaryDirectory, callable $onComplete, ?float $timeoutSeconds = null): void
     {
         $queue = $jobs;
         /** @var array<TKey, LiveProcess> */
@@ -44,14 +46,25 @@ final class ProcessRunner
                 }
 
                 foreach ($live as $id => $proc) {
-                    if (\proc_get_status($proc['process'])['running']) {
+                    // Only the first status call after exit reports the real exit code.
+                    $status = \proc_get_status($proc['process']);
+
+                    if ($status['running']) {
+                        if ($timeoutSeconds !== null && \microtime(true) - $proc['startedAt'] >= $timeoutSeconds) {
+                            self::kill($proc['process']);
+                            \proc_close($proc['process']);
+                            unset($live[$id]);
+                            @\unlink($proc['stdoutFile']);
+                            $onComplete($id, null, -1, 9);
+                        }
+
                         continue;
                     }
 
                     // Only reaped once exit is confirmed, so proc_close() never blocks here.
                     \proc_close($proc['process']);
                     unset($live[$id]);
-                    $onComplete($id, self::takeOutput($proc['stdoutFile']));
+                    $onComplete($id, self::takeOutput($proc['stdoutFile']), $status['exitcode'], $status['signaled'] ? $status['termsig'] : null);
                 }
 
                 if ($live !== []) {
@@ -68,6 +81,9 @@ final class ProcessRunner
         }
     }
 
+    /**
+     * @return positive-int
+     */
     public static function cpuCount(): int
     {
         if (\PHP_OS_FAMILY === 'Windows') {
@@ -104,7 +120,7 @@ final class ProcessRunner
                 $job['command'],
                 [0 => ['file', $nullDevice, 'r'], 1 => ['file', $stdoutFile, 'w']],
                 $pipes,
-                null,
+                $job['cwd'] ?? null,
                 $job['env'] ?? null,
             );
         } finally {
@@ -118,7 +134,7 @@ final class ProcessRunner
             throw new \RuntimeException(\sprintf('Failed to start %s.', \is_array($job['command']) ? \implode(' ', $job['command']) : $job['command']));
         }
 
-        return ['process' => $process, 'stdoutFile' => $stdoutFile];
+        return ['process' => $process, 'stdoutFile' => $stdoutFile, 'startedAt' => \microtime(true)];
     }
 
     private static function takeOutput(string $stdoutFile): string
@@ -138,7 +154,67 @@ final class ProcessRunner
      */
     private static function kill($process): void
     {
+        // Psalm re-execs itself into a child PHP process when its own restarter needs
+        // different ini/opcache/JIT settings (PsalmRestarter). That child is spawned via a
+        // plain fork+exec, not pcntl_exec(), so killing only the process proc_open() gave us
+        // leaves it running, orphaned under init and still burning CPU (and racing our cache
+        // dir cleanup). Discover descendants first, while the parent/ppid chain is still
+        // intact, then kill leaves before the root.
+        if (\PHP_OS_FAMILY !== 'Windows') {
+            self::killDescendants(\proc_get_status($process)['pid']);
+        }
+
         // Signal 9 = SIGKILL, as a literal so this does not need ext-pcntl; ignored on Windows.
         @\proc_terminate($process, 9);
+    }
+
+    /**
+     * Best-effort: kills every process descended from $rootPid (not $rootPid itself), deepest
+     * generation first, so a still-alive parent never gets the chance to reparent a child we
+     * already accounted for. Shells out to `ps`/`kill` rather than posix_kill()/pcntl, since
+     * neither extension is required by this package.
+     */
+    private static function killDescendants(int $rootPid): void
+    {
+        foreach (\array_reverse(self::collectDescendantGenerations($rootPid)) as $generation) {
+            foreach ($generation as $pid) {
+                /** @psalm-suppress ForbiddenCode */
+                @\shell_exec('kill -9 ' . $pid . ' 2>/dev/null');
+            }
+        }
+    }
+
+    /**
+     * @return list<list<int>> descendant pids grouped by generation, direct children first
+     */
+    private static function collectDescendantGenerations(int $rootPid): array
+    {
+        /** @psalm-suppress ForbiddenCode */
+        $output = (string) @\shell_exec('ps -A -o pid=,ppid= 2>/dev/null');
+
+        /** @var array<int, list<int>> */
+        $childrenByParent = [];
+        foreach (\explode("\n", \trim($output)) as $line) {
+            if (\preg_match('/^\s*(\d+)\s+(\d+)\s*$/', $line, $matches) !== 1) {
+                continue;
+            }
+            $childrenByParent[(int) $matches[2]][] = (int) $matches[1];
+        }
+
+        $generations = [];
+        $frontier = $childrenByParent[$rootPid] ?? [];
+
+        while ($frontier !== []) {
+            $generations[] = $frontier;
+            $next = [];
+            foreach ($frontier as $pid) {
+                foreach ($childrenByParent[$pid] ?? [] as $childPid) {
+                    $next[] = $childPid;
+                }
+            }
+            $frontier = $next;
+        }
+
+        return $generations;
     }
 }

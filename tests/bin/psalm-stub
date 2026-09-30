@@ -7,7 +7,7 @@ declare(strict_types=1);
 // entries that exist on disk. Behavior comes from the environment (STUB_*), which is shared by
 // every group of a batch, or per invocation from --stub-* arguments in a group's argument string:
 //   --stub-sleep=<seconds>    overrides STUB_SLEEP
-//   --stub-mode=<mode>        overrides STUB_MODE
+//   --stub-mode=<mode>        overrides STUB_MODE (empty: no issues at all; no_output: prints nothing)
 //   --stub-await-pids=<n>     first wait until STUB_PID_DIR holds <n> pid files
 // STUB_PID_DIR: each invocation writes its pid there. STUB_STDERR: text written to stderr.
 // STUB_STDERR_BYTES: that many bytes written to stderr. STUB_POPULATE_CACHE: nested files
@@ -52,8 +52,53 @@ if ($stderr !== '') {
 
 $mode = (string) ($options['mode'] ?? (\getenv('STUB_MODE') ?: 'per_file'));
 
+// --stub-exit=<code> ends with that exit status (after the output); --stub-exit=signal with SIGKILL.
+if (isset($options['exit'])) {
+    $exit = $options['exit'];
+    \register_shutdown_function(static function () use ($exit): void {
+        if ($exit === 'signal') {
+            \posix_kill(\getmypid(), 9);
+        }
+        exit((int) $exit);
+    });
+}
+
+if ($mode === 'object_json') {
+    \fwrite(\STDOUT, '{}');
+    exit(0);
+}
+
+if ($mode === 'empty') {
+    \fwrite(\STDOUT, '[]');
+    exit(0);
+}
+
+if ($mode === 'no_output') {
+    exit(0);
+}
+
 if ($mode === 'invalid_json') {
     \fwrite(\STDOUT, 'NOT JSON');
+    exit(0);
+}
+
+if ($mode === 'spawn_grandchild') {
+    // Mimics Psalm's own PsalmRestarter: this process spawns an independent child (via
+    // proc_open, not pcntl_exec, so it does NOT replace this process) and then blocks,
+    // as if waiting on a re-exec'd child running the real analysis. Killing only this
+    // process leaves that child running, orphaned under init.
+    $pidFile = (string) \getenv('STUB_GRANDCHILD_PID_FILE');
+    $grandchildScript = 'file_put_contents(' . \var_export($pidFile, true) . ', (string) getmypid()); sleep(30);';
+    $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $pipes = [];
+    $grandchild = \proc_open([\PHP_BINARY, '-r', $grandchildScript], $descriptors, $pipes);
+    if (\is_resource($grandchild)) {
+        \fclose($pipes[0]);
+        \fclose($pipes[1]);
+        \fclose($pipes[2]);
+    }
+    \sleep(30);
+    \fwrite(\STDOUT, '[]');
     exit(0);
 }
 
@@ -68,6 +113,7 @@ if ($mode === 'env_record') {
             'TEMP' => (string) \getenv('TEMP'),
             'sys_get_temp_dir' => \sys_get_temp_dir(),
             'argv' => \array_slice($argv, 1),
+            'cwd' => (string) \getcwd(),
         ];
         \file_put_contents(
             $logDir . '/' . \getmypid() . '_' . \bin2hex(\random_bytes(4)) . '.json',
@@ -86,6 +132,18 @@ foreach (\array_slice($argv, 1) as $arg) {
     }
 }
 
+if ($mode === 'record_contents') {
+    // One JSON log per invocation listing the analyzed files' contents, so a test can tell
+    // which fixtures were analyzed (the files themselves are hash-named temp copies).
+    $logDir = (string) \getenv('STUB_CONTENTS_LOG_DIR');
+    \file_put_contents(
+        $logDir . '/' . \getmypid() . '_' . \bin2hex(\random_bytes(4)) . '.json',
+        (string) \json_encode(\array_map(static fn(string $file): string => (string) \file_get_contents($file), $files)),
+    );
+    \fwrite(\STDOUT, '[]');
+    exit(0);
+}
+
 $errors = [];
 if ($mode === 'large') {
     foreach ($files as $file) {
@@ -99,6 +157,18 @@ if ($mode === 'large') {
             ];
         }
     }
+} elseif ($mode === 'two_lines') {
+    foreach ($files as $file) {
+        $errors[] = ['type' => 'StubError', 'line_from' => 1, 'column_from' => 1, 'message' => 'first', 'file_path' => $file];
+        $errors[] = ['type' => 'StubError', 'line_from' => 2, 'column_from' => 1, 'message' => 'second', 'file_path' => $file];
+    }
+} elseif ($mode === 'header_message') {
+    foreach ($files as $file) {
+        $errors[] = ['type' => 'StubError', 'line_from' => 1, 'column_from' => 1, 'message' => "line one\n--FOO--", 'file_path' => $file];
+    }
+} elseif ($mode === 'foreign_file') {
+    // An issue in a file Psalm was not asked about, as an included file would produce.
+    $errors[] = ['type' => 'ForeignError', 'line_from' => 3, 'column_from' => 1, 'message' => 'from an included file', 'file_path' => '/elsewhere/Included.php'];
 } elseif ($mode === 'echo_code') {
     // The message is the file's own code minus the open tag, so each id's output is distinct.
     foreach ($files as $file) {
