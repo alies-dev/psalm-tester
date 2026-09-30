@@ -62,13 +62,18 @@ vendor/bin/phpunit --filter array_values                  # every data set whose
 vendor/bin/phpunit --filter 'testPhpt@array_values.phpt'  # exactly one data set
 ```
 
+One STDERR line sums up each batch, e.g. `psalm-tester: 3 phpt files (0 skipped), 2 Psalm runs`.
+
 Do not pass a directory holding fixtures on the command line (`vendor/bin/phpunit tests/Psalm`): PHPUnit then also
 runs every `.phpt` file as its own PHPT test, executing the code instead of analyzing it. A `<directory>` in
 `phpunit.xml` is safe, since it collects only `*Test.php` by default.
 
-Had the tag said `list<int>`, the test would fail with:
+Had the tag said `list<int>`, the test would fail with a summary (`type`, `missing` and `unexpected` issues) above
+PHPUnit's diff:
 
 ```
+Psalm reported what the expectation did not list, or missed what it did:
+  type        line 5  $_list: expected list<int>, actual non-empty-list<1|2>
 Failed asserting that two strings are identical.
 --- Expected
 +++ Actual
@@ -125,9 +130,8 @@ $_parts = explode(',', 'a,b');
 --EXPECT--
 ```
 
-It reports as incomplete while the output mismatches, and fails once it matches, so a stale `--XFAIL--` gets removed.
-
-Fixtures with the same arguments share one Psalm run and symbol table, so keep class and function names unique.
+Fixtures with the same arguments share one Psalm run and symbol table, so keep class and function names unique, or
+give a fixture its own run with `--CONFLICTS--`.
 
 ## Supported phpt sections
 
@@ -138,13 +142,14 @@ Psalm semantics:
 
 | Section | In psalm-tester |
 |---|---|
-| `--TEST--` | Optional description, ignored. |
+| `--TEST--`, `--DESCRIPTION--`, `--CREDITS--` | Optional, ignored. |
 | `--FILE--` | Required. Code that Psalm analyzes; it is never executed. |
 | `--EXPECT--` | Compared byte for byte with the output. Unlike php-src, neither side is trimmed. |
 | `--EXPECTF--` | Matched with PHPUnit's [`assertStringMatchesFormat()`](https://docs.phpunit.de/en/11.5/assertions.html#assertstringmatchesformat) (`%d`, `%s`, `%a`, ...). |
 | `--ARGS--` | Psalm CLI arguments (php-src: script arguments), appended to the tester's. See below. |
 | `--SKIPIF--` | PHP script run in its own process. Output starting with `skip` (case insensitive) skips the test, the rest being the reason. php-src's `xfail`, `warn` and `info` prefixes are not recognized. |
 | `--XFAIL--` | Why the output is expected to mismatch. Mismatch: PHPUnit incomplete. Match: PHPUnit failure (php-src only warns). |
+| [`--CONFLICTS--`](https://qa.php.net/phpt_details.php#conflicts) | Keys, one per line. The fixture gets its own Psalm run; runs sharing a key never overlap, and `all` runs alone. |
 | `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--`, `--CLEAN--`, `--ENV--`, `--INI--` | Rejected as "not supported by psalm-tester". |
 
 Any other section throws "Unknown section", and a repeated one "Duplicate section"; either errors only that test.
@@ -224,7 +229,11 @@ to PHPUnit. `Phpt::fromFile()` loads a fixture.
 
 ## How tests run
 
-- SKIPIF scripts run first, concurrently. The rest is analyzed with one Psalm run (with `--no-cache`) per distinct
-  argument set, so an expensive plugin boot is paid once per set; up to `withConcurrency()` runs go at once.
+- SKIPIF scripts run first, concurrently. The rest is analyzed with one Psalm run per distinct argument set, so an
+  expensive plugin boot is paid once per set; up to `withConcurrency()` runs go at once. Flag order does not split a
+  set, unless an option takes its value as a separate word (`--config x`, `-c x`, `--root x`, `-r x`, `--printer x`).
+- Each run gets `--no-cache` and its own `XDG_CACHE_HOME` and temp directory, but an explicit `<cacheDirectory>` in
+  `psalm.xml` takes precedence: `Config::getGlobalCacheDirectory()` then returns the same path in every concurrent
+  run, so a plugin writing there must handle concurrent writers.
 - A run that crashes, exits with a status other than 0 or 2, prints something other than Psalm's JSON issue list,
   reports issues in other files, or times out gives `Outcome::Error` to each of its tests. It never passes.

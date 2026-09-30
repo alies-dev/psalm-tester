@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format follows
 - `withTimeout()` kills a hung Psalm run with its child processes (on Windows, only the Psalm process itself) and
   reports its tests as errors.
 - `withConcurrency()`, `withWorkingDirectory()`, `withEnv()`.
+- `--CONFLICTS--` section (php-src semantics): the fixture gets its own Psalm run, runs sharing a key never overlap,
+  and `all` runs alone. `--DESCRIPTION--` and `--CREDITS--` are accepted and ignored.
+- A failure summary above PHPUnit's diff: `missing` and `unexpected` issues (with the code line) and `CheckType`
+  mismatches as expected versus actual type.
+- `PsalmPhptTestCase` prints one start line on STDERR: `psalm-tester: N phpt files (S skipped), G Psalm runs`.
+- Argument order no longer splits Psalm runs, unless an option takes its value as a separate word.
 
 ### Changed
 
