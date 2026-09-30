@@ -7,5 +7,3 @@ use ShipMonk\ComposerDependencyAnalyser\Config\Configuration;
 // command: composer dependency-analyser
 
 return new Configuration();
-
-// command: composer dependency-analyser
