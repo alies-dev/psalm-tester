@@ -68,6 +68,15 @@ final class PsalmPhptTestCaseTest extends TestCase
         self::assertStringContainsString('psalm-tester: 4 phpt files (1 skipped), 1 Psalm run', $output);
     }
 
+    public function testTheStartLineIsSingularForOneFileAndOneRun(): void
+    {
+        [, $output] = $this->runFixture(['--filter', 'testPhpt@sub/gamma.phpt']);
+
+        self::assertStringContainsString('psalm-tester: 1 phpt file (0 skipped), 1 Psalm run', $output);
+        self::assertStringNotContainsString('1 phpt files', $output);
+        self::assertStringNotContainsString('1 Psalm runs', $output);
+    }
+
     public function testPrintsTheStartLineExactlyOnceUnderProcessIsolationToo(): void
     {
         // setUpBeforeClass() runs once in PHPUnit's coordinating process even with

@@ -396,6 +396,26 @@ final class PsalmTesterRunTest extends TestCase
         self::assertContains(['<?php // plain'], $invocations);
     }
 
+    public function testCountGroupsAgreesWithTheActualNumberOfInvocationsWhenConflictsAreInvolved(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        $tester = self::createTester();
+        // Same (default) --ARGS--, so without --CONFLICTS-- countGroups() would (wrongly) say 1.
+        $phpts = [
+            'conflicting' => new Phpt(code: '<?php // conflicting', expectation: Expectation::exact(''), conflicts: ['key']),
+            'plain' => new Phpt(code: '<?php // plain', expectation: Expectation::exact('')),
+        ];
+
+        $tester->run($phpts);
+        $actualInvocations = \count(\glob($logDir . '/*.json') ?: []);
+
+        self::assertSame($actualInvocations, $tester->countGroups($phpts));
+        self::assertSame(2, $actualInvocations);
+    }
+
     public function testTwoFixturesSharingAConflictsKeyNeverRunConcurrently(): void
     {
         $tester = self::createTester();

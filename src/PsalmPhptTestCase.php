@@ -137,8 +137,16 @@ abstract class PsalmPhptTestCase extends TestCase
             }
         }
 
+        $files = \count($relPaths);
         $groups = static::tester()->countGroups($analyzed);
-        \fwrite(\STDERR, \sprintf("psalm-tester: %d phpt files (%d skipped), %d Psalm run%s\n", \count($relPaths), $skipped, $groups, $groups === 1 ? '' : 's'));
+        \fwrite(\STDERR, \sprintf(
+            "psalm-tester: %d phpt file%s (%d skipped), %d Psalm run%s\n",
+            $files,
+            $files === 1 ? '' : 's',
+            $skipped,
+            $groups,
+            $groups === 1 ? '' : 's',
+        ));
     }
 
     /**

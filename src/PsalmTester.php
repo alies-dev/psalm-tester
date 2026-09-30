@@ -183,7 +183,7 @@ final readonly class PsalmTester
 
         foreach ($phpts as $phpt) {
             try {
-                $keys[\implode("\0", self::groupKeyTokens($this->effectiveArguments($phpt)))] = true;
+                $keys[self::groupKey($phpt, $this->effectiveArguments($phpt))] = true;
             } catch (\InvalidArgumentException) {
                 // Invalid --ARGS--: run() gives it its own error result, no Psalm process for it.
             }
@@ -228,14 +228,7 @@ final readonly class PsalmTester
 
                 $file = self::createTemporaryCodeFile($temporaryDirectory, $phpt->code);
                 $tempFiles[] = $file;
-                $key = \implode("\0", self::groupKeyTokens($argv));
-
-                // --CONFLICTS--: never co-analyzed with another test, conflicting or not, so it
-                // needs a group key nothing else can share, regardless of matching arguments.
-                if ($phpt->conflicts !== []) {
-                    $key .= "\0conflicts:" . (string) $id;
-                }
-
+                $key = self::groupKey($phpt, $argv);
                 $groups[$key]['argv'] = $argv;
                 $groups[$key]['entries'][$id] = ['file' => $file, 'phpt' => $phpt];
             }
@@ -390,6 +383,21 @@ final readonly class PsalmTester
         \sort($args, \SORT_STRING);
 
         return $args;
+    }
+
+    /**
+     * The Psalm-run group key for $phpt: run() and countGroups() both build it through here, so
+     * they cannot drift apart again. --CONFLICTS--: never co-analyzed with another test,
+     * conflicting or not, so it gets a key nothing else can share, regardless of matching
+     * arguments; spl_object_id() is unique per Phpt instance for exactly that purpose.
+     *
+     * @param list<string> $argv
+     */
+    private static function groupKey(Phpt $phpt, array $argv): string
+    {
+        $key = \implode("\0", self::groupKeyTokens($argv));
+
+        return $phpt->conflicts === [] ? $key : $key . "\0conflicts:" . \spl_object_id($phpt);
     }
 
     /**
