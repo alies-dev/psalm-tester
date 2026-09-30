@@ -205,9 +205,9 @@ final readonly class PsalmTester
         if ($this->options['update'] ?? self::envUpdateDefault()) {
             foreach ($results as $id => $result) {
                 // XFailed is included so a mismatching --XFAIL-- test is reported "not updated"
-                // (its reason) instead of silently skipped; XFailed is never itself rewritten.
+                // (with progress on) instead of silently skipped; XFailed is never itself rewritten.
                 if ($result->outcome === Outcome::Failed || $result->outcome === Outcome::XFailed) {
-                    $results[$id] = self::applyUpdate($result);
+                    $results[$id] = $this->applyUpdate($result);
                 }
             }
         }
@@ -228,29 +228,44 @@ final readonly class PsalmTester
     }
 
     /**
-     * Rewrites $result's file with its actual output and returns the Outcome::Updated result, or
-     * reports why it could not be updated on STDERR and returns $result unchanged.
+     * Rewrites $result's file with its actual output and returns an Outcome::Updated result, or
+     * the Failed result with "not updated: <path> (<why>)" as reason, which assert() shows. A
+     * rewrite failure affects only that file. The same line goes to STDERR only with
+     * withProgress(true): any stderr fails a --process-isolation test.
      */
-    private static function applyUpdate(Result $result): Result
+    private function applyUpdate(Result $result): Result
     {
         $phpt = $result->phpt;
-        $reason = self::updateIneligibleReason($phpt);
+        $why = self::updateIneligibleReason($phpt);
 
-        if ($reason !== null) {
-            \fwrite(\STDERR, \sprintf("not updated: %s (%s)\n", $phpt->path !== '' ? $phpt->path : '(in-code test)', $reason));
+        if ($why === null) {
+            try {
+                PhptRewriter::rewriteExpect($phpt->path, $result->output);
+                $updated = new Result($phpt, Outcome::Updated, $result->output, $result->issues, \sprintf('updated: %s', $phpt->path));
+                $this->report((string) $updated->reason);
 
-            return $result;
+                return $updated;
+            } catch (\RuntimeException|\LogicException $e) {
+                $why = $e->getMessage();
+            }
         }
 
-        PhptRewriter::rewriteExpect($phpt->path, $result->output);
-        \fwrite(\STDERR, \sprintf("updated: %s\n", $phpt->path));
+        $notUpdated = \sprintf('not updated: %s (%s)', $phpt->path !== '' ? $phpt->path : '(in-code test)', $why);
+        $this->report($notUpdated);
 
-        return new Result($phpt, Outcome::Updated, $result->output, $result->issues);
+        // An XFailed result keeps its --XFAIL-- reason: that is what markTestIncomplete() shows.
+        return $result->outcome === Outcome::Failed
+            ? new Result($phpt, Outcome::Failed, $result->output, $result->issues, $notUpdated)
+            : $result;
     }
 
-    /**
-     * @psalm-pure
-     */
+    private function report(string $line): void
+    {
+        if ($this->options['progress']) {
+            \fwrite(\STDERR, $line . "\n");
+        }
+    }
+
     /**
      * @psalm-mutation-free
      */

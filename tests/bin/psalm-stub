@@ -141,6 +141,15 @@ if ($mode === 'large') {
             ];
         }
     }
+} elseif ($mode === 'two_lines') {
+    foreach ($files as $file) {
+        $errors[] = ['type' => 'StubError', 'line_from' => 1, 'column_from' => 1, 'message' => 'first', 'file_path' => $file];
+        $errors[] = ['type' => 'StubError', 'line_from' => 2, 'column_from' => 1, 'message' => 'second', 'file_path' => $file];
+    }
+} elseif ($mode === 'header_message') {
+    foreach ($files as $file) {
+        $errors[] = ['type' => 'StubError', 'line_from' => 1, 'column_from' => 1, 'message' => "line one\n--FOO--", 'file_path' => $file];
+    }
 } elseif ($mode === 'foreign_file') {
     // An issue in a file Psalm was not asked about, as an included file would produce.
     $errors[] = ['type' => 'ForeignError', 'line_from' => 3, 'column_from' => 1, 'message' => 'from an included file', 'file_path' => '/elsewhere/Included.php'];
