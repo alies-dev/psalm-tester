@@ -172,6 +172,18 @@ final class PhptParsingTest extends TestCase
         self::assertSame(4, $test->codeFirstLine);
     }
 
+    public function testFromFileAcceptsDescriptionAndCreditsSections(): void
+    {
+        $file = $this->writeTempFile("--TEST--\nnarrows array_values\n--DESCRIPTION--\nSee RFC.\n--CREDITS--\nJane Doe\n--ARGS--\n--stub-mode=empty\n--FILE--\n<?php\n--EXPECT--\n");
+        $test = Phpt::fromFile($file);
+
+        self::assertSame('<?php', $test->code);
+        self::assertSame(10, $test->codeFirstLine);
+
+        $result = PsalmTester::create()->withPsalm(__DIR__ . '/bin/psalm-stub')->runOne($test);
+        self::assertSame(Outcome::Passed, $result->outcome);
+    }
+
     public function testFromFileKeepsBlankAndZeroLinesVerbatim(): void
     {
         $test = Phpt::fromFile($this->writeTempFile("--FILE--\n<?php\n--EXPECT--\n\n0\nlast"));
