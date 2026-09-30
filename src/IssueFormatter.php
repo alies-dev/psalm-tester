@@ -53,7 +53,7 @@ final class IssueFormatter
             "Failed to decode Psalm JSON output for args [%s]: %s\nOutput: %s",
             $args,
             $problem,
-            $output === '' ? '(empty)' : \mb_strcut($output, 0, 2000),
+            $output === '' ? '(empty)' : \substr($output, 0, 2000),
         ));
     }
 

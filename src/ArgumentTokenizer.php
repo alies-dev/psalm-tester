@@ -49,7 +49,7 @@ final class ArgumentTokenizer
             } elseif ($char === '\\' && $i + 1 < $length) {
                 $token .= $arguments[++$i];
                 $inToken = true;
-            } elseif (\ctype_space($char)) {
+            } elseif (\in_array($char, [" ", "\t", "\n", "\r", "\v", "\f"], true)) {
                 if ($inToken) {
                     $tokens[] = $token;
                     $token = '';
