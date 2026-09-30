@@ -13,8 +13,8 @@ All notable changes to this project are documented here. The format follows
 - New API: `Phpt`, `Expectation`, `PsalmTester::create()` with `with*()` methods, and `run()` / `runOne()` returning a
   `Result` with an `Outcome`, the formatted output and structured `Issue`s.
 - `--XFAIL--` section: an expected failure reports as incomplete, and as a failure once it passes.
-- Update mode (`withUpdate(true)` or `PSALM_TESTER_UPDATE=1`) rewrites `--EXPECT--` sections in place, atomically.
-- `withTimeout()` kills a hung Psalm run with its child processes and reports its tests as errors.
+- `withTimeout()` kills a hung Psalm run with its child processes (on Windows, only the Psalm process itself) and
+  reports its tests as errors.
 - `withConcurrency()`, `withWorkingDirectory()`, `withEnv()`.
 
 ### Changed
@@ -26,10 +26,13 @@ All notable changes to this project are documented here. The format follows
   configured config.
 - Arguments no longer go through a shell: `withArguments()` takes one argument per parameter and `--ARGS--` is split
   into words.
-- `*_EXTERNAL` paths are relative to the `.phpt` file, not to the current directory.
-- Progress output is off by default (`withProgress(true)` turns it on).
 - A repeated section throws `Duplicate section --X--` instead of silently replacing the earlier one. `--CLEAN--`,
   `--ENV--` and `--INI--` get an explicit "not supported by psalm-tester" message.
+
+### Removed
+
+- `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` sections: inline the expectation into the `.phpt` file.
+- Progress output (the `showProgress` parameter of `create()`).
 
 ### Fixed
 

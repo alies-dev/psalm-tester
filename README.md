@@ -18,8 +18,8 @@ Changes: [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.3: [UPGRADING.md](UPGRAD
 composer require --dev alies-dev/psalm-tester vimeo/psalm
 ```
 
-Requires PHP 8.2+ and PHPUnit 11, 12 or 13. Psalm is not a dependency of this package: install the version you test
-against (6.10+ or 7).
+Requires PHP 8.2+, Composer 2 and PHPUnit 11, 12 or 13. Psalm is not a dependency of this package: install the
+version you test against (6.10+ or 7).
 
 A fixture, `tests/Psalm/phpt/array_values.phpt`:
 
@@ -161,7 +161,6 @@ some sections a Psalm meaning:
 | `--FILE--` | Required. Code that Psalm analyzes; it is never executed. |
 | `--EXPECT--` | Compared byte for byte with the formatted output. Unlike php-src, neither side is trimmed: a blank line after the last issue is part of the expectation. |
 | `--EXPECTF--` | Matched with PHPUnit's [`assertStringMatchesFormat()`](https://docs.phpunit.de/en/11.5/assertions.html#assertstringmatchesformat) placeholders (`%d`, `%s`, `%a`, ...), run by PHPUnit rather than php-src's `run-tests.php`. |
-| `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--` | Path of a file holding the expectation, relative to the `.phpt` file. |
 | `--ARGS--` | Psalm CLI arguments (php-src: arguments for the script). See [Psalm arguments](#psalm-arguments). |
 | `--SKIPIF--` | PHP script run in its own process, in the tester's working directory and environment. Output starting with `skip` (case insensitive) skips the test with the rest as reason. php-src's `xfail`, `warn` and `info` prefixes are not recognized. |
 | `--XFAIL--` | Reason the output is expected to mismatch. Mismatch: PHPUnit incomplete. Match: PHPUnit failure (php-src only warns). |
@@ -218,13 +217,11 @@ A plugin author's `tests/Psalm/psalm.xml` needs no `<projectFiles>`, since the t
 | `withPsalm(string $binary)` | the `vimeo/psalm` binary installed via Composer |
 | `withConfig(string $psalmXml)` | the strict [src/psalm.xml](src/psalm.xml) |
 | `withArguments(string ...$args)` | `'--no-progress', '--no-diff'`; one argument per parameter, replaces the default |
-| `withTimeout(?float $seconds)` | `null`, no timeout |
+| `withTimeout(?float $seconds)` | `null`, no timeout; an expired run is killed with its child processes (on Windows, only the Psalm process itself) |
 | `withConcurrency(int $n)` | one per CPU core; bounds concurrent SKIPIF scripts and concurrent Psalm runs |
 | `withWorkingDirectory(string $dir)` | the current one; relative `--config` paths resolve against it |
 | `withEnv(array $env)` | none; extra variables for Psalm and SKIPIF processes (not `XDG_CACHE_HOME`, `TMPDIR`, `TMP`, `TEMP`) |
 | `withTemporaryDirectory(string $dir)` | `<system temp dir>/psalm_test` |
-| `withProgress(bool $on)` | `false`; `true` prints one `<arguments>: <n> tests` line per Psalm run on STDERR, which PHPUnit's `--process-isolation` treats as an error |
-| `withUpdate(bool $on)` | env var `PSALM_TESTER_UPDATE` (`1` or `true`); see [Update mode](#update-mode) |
 
 ## Using PsalmTester directly
 
@@ -277,7 +274,6 @@ the result to PHPUnit:
 | `Skipped` | `markTestSkipped()` with the SKIPIF reason |
 | `XFailed` | `markTestIncomplete()` with the `--XFAIL--` reason |
 | `XPassed` | failure asking to remove `--XFAIL--` |
-| `Updated` | passes (see [Update mode](#update-mode)) |
 | `Error` | failure with the reason |
 
 ## How tests run
@@ -294,22 +290,3 @@ the result to PHPUnit:
   passes. Other runs are unaffected.
 - `run()` throws only when the tester itself fails (e.g. it cannot write a temporary file), after killing the runs
   still going.
-
-## Update mode
-
-`PSALM_TESTER_UPDATE=1 vendor/bin/phpunit` (or `withUpdate(true)`) rewrites the `--EXPECT--` section of each failing
-test with the actual output and reports it as `Outcome::Updated`. The rewrite is atomic, keeps every other byte of
-the file, and follows symlinks. Starting from an empty `--EXPECT--`:
-
-```phpt
---FILE--
-<?php
-
-/** @psalm-trace $_list */
-$_list = array_values(['a' => 1, 'b' => 2]);
---EXPECT--
-Trace on line 5: $_list: non-empty-list<1|2>
-```
-
-Some tests stay `Failed` with a `not updated: <path> (<why>)` reason: `--EXPECTF--`, `*_EXTERNAL` and `--XFAIL--`
-tests, output containing a line that reads as a section header, and files changed while Psalm ran.
