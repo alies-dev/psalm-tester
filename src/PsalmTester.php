@@ -172,6 +172,26 @@ final readonly class PsalmTester
         return $results;
     }
 
+    /**
+     * @internal PsalmPhptTestCase's start line only: how many Psalm invocations run($phpts)
+     * would make, without running anything. Callers exclude SKIPIF-skipped tests themselves.
+     * @param iterable<array-key, Phpt> $phpts
+     */
+    public function countGroups(iterable $phpts): int
+    {
+        $keys = [];
+
+        foreach ($phpts as $phpt) {
+            try {
+                $keys[\implode("\0", $this->effectiveArguments($phpt))] = true;
+            } catch (\InvalidArgumentException) {
+                // Invalid --ARGS--: run() gives it its own error result, no Psalm process for it.
+            }
+        }
+
+        return \count($keys);
+    }
+
     public function runOne(Phpt $phpt): Result
     {
         return $this->run([$phpt])[0];

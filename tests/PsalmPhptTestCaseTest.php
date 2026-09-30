@@ -61,6 +61,16 @@ final class PsalmPhptTestCaseTest extends TestCase
         self::assertMatchesRegularExpression(self::summary(tests: 4, assertions: 3, suffix: 'Skipped: 1'), $output);
     }
 
+    public function testPrintsOneStartLineWithFileSkipAndGroupCountsExceptWhenIsolated(): void
+    {
+        // The fixture: 4 files, 1 SKIPIF-skipped, the other 3 sharing the same (default) --ARGS--.
+        [, $output] = $this->runFixture([]);
+        self::assertStringContainsString('psalm-tester: 4 phpt files (1 skipped), 1 Psalm run', $output);
+
+        [, $isolatedOutput] = $this->runFixture(['--process-isolation']);
+        self::assertStringNotContainsString('psalm-tester:', $isolatedOutput);
+    }
+
     public function testDataSetFilterSelectsANestedFileByItsRelativePath(): void
     {
         [$exitCode, $output] = $this->runFixture(['--filter', 'testPhpt@sub/gamma.phpt']);

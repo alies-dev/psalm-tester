@@ -7,6 +7,7 @@ namespace AliesDev\PsalmTester;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\TestSuite;
+use PHPUnit\TextUI\Configuration\Registry;
 
 /**
  * Runs every *.phpt file under phptDirectory() (recursively) as one data set of testPhpt(), named
@@ -44,9 +45,17 @@ abstract class PsalmPhptTestCase extends TestCase
     public static function setUpBeforeClass(): void
     {
         self::$state[static::class] = ['results' => [], 'errors' => []];
+        $relPaths = self::selectedRelPaths();
 
-        // Unknown selection (e.g. a test run in a separate process): each test prepares itself.
-        self::prepare(self::selectedRelPaths() ?? []);
+        // Unknown selection (e.g. a test run in a separate process): each test prepares itself,
+        // silently; the start line below is skipped under --process-isolation too, since PHPUnit
+        // treats an isolated test's child writing to STDERR as an error.
+        self::prepare($relPaths ?? []);
+
+        /** @psalm-suppress InternalClass, InternalMethod no public API exposes this, like selectedRelPaths() above */
+        if ($relPaths !== null && !Registry::get()->processIsolation()) {
+            self::reportStart($relPaths);
+        }
     }
     #[\Override]
     public static function tearDownAfterClass(): void
@@ -110,6 +119,29 @@ abstract class PsalmPhptTestCase extends TestCase
         }
 
         self::$state[static::class] = $state;
+    }
+
+    /**
+     * One line on STDERR before the batch runs, e.g.
+     * "psalm-tester: 758 phpt files (53 skipped), 14 Psalm runs".
+     *
+     * @param list<string> $relPaths
+     */
+    private static function reportStart(array $relPaths): void
+    {
+        $skipped = 0;
+        $analyzed = [];
+
+        foreach (self::$state[static::class]['results'] as $result) {
+            if ($result->outcome === Outcome::Skipped) {
+                ++$skipped;
+            } else {
+                $analyzed[] = $result->phpt;
+            }
+        }
+
+        $groups = static::tester()->countGroups($analyzed);
+        \fwrite(\STDERR, \sprintf("psalm-tester: %d phpt files (%d skipped), %d Psalm run%s\n", \count($relPaths), $skipped, $groups, $groups === 1 ? '' : 's'));
     }
 
     /**
