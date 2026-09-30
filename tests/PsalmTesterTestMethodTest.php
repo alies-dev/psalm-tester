@@ -20,6 +20,20 @@ final class PsalmTesterTestMethodTest extends TestCase
 {
     private const STUB_PATH = __DIR__ . '/bin/psalm-stub';
 
+    /** @var list<string> */
+    private array $scratchDirs = [];
+
+    protected function tearDown(): void
+    {
+        foreach ($this->scratchDirs as $dir) {
+            foreach (\glob($dir . '/*') ?: [] as $leftover) {
+                @\unlink($leftover);
+            }
+            @\rmdir($dir);
+        }
+        $this->scratchDirs = [];
+    }
+
     public function testTestPassesWhenOutputMatchesConstraint(): void
     {
         $tester = self::createStubTester();
@@ -44,7 +58,7 @@ final class PsalmTesterTestMethodTest extends TestCase
 
     public function testTestCleansUpTemporaryCodeFileOnSuccess(): void
     {
-        $tempDir = self::makeScratchDir();
+        $tempDir = $this->makeScratchDir();
         $tester = PsalmTester::create(psalmPath: self::STUB_PATH, temporaryDirectory: $tempDir, showProgress: false);
 
         $tester->test(new PsalmTest(
@@ -57,7 +71,7 @@ final class PsalmTesterTestMethodTest extends TestCase
 
     public function testTestCleansUpTemporaryCodeFileOnAssertionFailure(): void
     {
-        $tempDir = self::makeScratchDir();
+        $tempDir = $this->makeScratchDir();
         $tester = PsalmTester::create(psalmPath: self::STUB_PATH, temporaryDirectory: $tempDir, showProgress: false);
 
         try {
@@ -98,10 +112,11 @@ final class PsalmTesterTestMethodTest extends TestCase
         return PsalmTester::create(psalmPath: self::STUB_PATH, showProgress: false);
     }
 
-    private static function makeScratchDir(): string
+    private function makeScratchDir(): string
     {
         $dir = \sys_get_temp_dir() . '/psalm_tester_test_method_' . \bin2hex(\random_bytes(4));
         self::assertTrue(\mkdir($dir, 0777, true));
+        $this->scratchDirs[] = $dir;
 
         return $dir;
     }
