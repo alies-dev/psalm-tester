@@ -203,11 +203,14 @@ final readonly class PsalmTester
         }
 
         if ($this->options['update'] ?? self::envUpdateDefault()) {
+            /** @var array<string, string> $rewritten real path => output written in this run */
+            $rewritten = [];
+
             foreach ($results as $id => $result) {
                 // XFailed is included so a mismatching --XFAIL-- test is reported "not updated"
                 // (with progress on) instead of silently skipped; XFailed is never itself rewritten.
                 if ($result->outcome === Outcome::Failed || $result->outcome === Outcome::XFailed) {
-                    $results[$id] = $this->applyUpdate($result);
+                    $results[$id] = $this->applyUpdate($result, $rewritten);
                 }
             }
         }
@@ -232,15 +235,31 @@ final readonly class PsalmTester
      * the Failed result with "not updated: <path> (<why>)" as reason, which assert() shows. A
      * rewrite failure affects only that file. The same line goes to STDERR only with
      * withProgress(true): any stderr fails a --process-isolation test.
+     *
+     * @param array<string, string> $rewritten real path => output already written in this run
+     * @param-out array<string, string> $rewritten
      */
-    private function applyUpdate(Result $result): Result
+    private function applyUpdate(Result $result, array &$rewritten): Result
     {
         $phpt = $result->phpt;
         $why = self::updateIneligibleReason($phpt);
 
         if ($why === null) {
             try {
-                PhptRewriter::rewriteExpect($phpt->path, $result->output);
+                // The same file twice in one run (e.g. under two keys): write it once; the second
+                // would otherwise see its own earlier rewrite as a change during the run.
+                $realPath = \realpath($phpt->path);
+                $earlier = $realPath === false ? null : ($rewritten[$realPath] ?? null);
+
+                if ($earlier === null) {
+                    PhptRewriter::rewriteExpect($phpt->path, $result->output, $phpt->sourceHash);
+                    if ($realPath !== false) {
+                        $rewritten[$realPath] = $result->output;
+                    }
+                } elseif ($earlier !== $result->output) {
+                    throw new \RuntimeException('rewritten earlier in this run with a different output');
+                }
+
                 $updated = new Result($phpt, Outcome::Updated, $result->output, $result->issues, \sprintf('updated: %s', $phpt->path));
                 $this->report((string) $updated->reason);
 
