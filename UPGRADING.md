@@ -6,6 +6,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full list of changes.
 
 | 0.3 | 0.4 |
 |---|---|
+| `vimeo/psalm` required by your project | required by psalm-tester (`^6.10 \|\| ^7.0.0-beta16`) |
 | `PsalmTest` | `Phpt` |
 | `PsalmTest::fromPhptFile($file)` | `Phpt::fromFile($file)` |
 | `new PsalmTest($code, $constraint, $arguments, $codeFirstLine)` | `new Phpt($code, $expectation, $arguments, $codeFirstLine)`, with `Expectation::exact()` / `Expectation::format()` instead of a PHPUnit constraint |
@@ -19,5 +20,5 @@ See [CHANGELOG.md](CHANGELOG.md) for the full list of changes.
 | `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--` | removed: move the expectation into `--EXPECT--` / `--EXPECTF--` |
 | `$tester->test($test)` | `$tester->runOne($phpt)->assert()` |
 | a hand-written `TestCase` with discovery, a data provider and `runBatch()` | `PsalmPhptTestCase` (see the [README](README.md#quick-start)) |
-| unknown sections threw `Section X is not supported.` | still throw, naming the file; `--CLEAN--`, `--ENV--`, `--INI--` get a "not supported by psalm-tester" message |
+| unknown sections threw `Section X is not supported.` | still throw, naming the file; `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--`, `--CLEAN--`, `--ENV--`, `--INI--` get a "not supported by psalm-tester" message |
 | a repeated section silently replaced the earlier one | a repeated section throws `Duplicate section --X--` |

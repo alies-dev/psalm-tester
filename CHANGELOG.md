@@ -19,6 +19,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `vimeo/psalm` (`^6.10 || ^7.0.0-beta16`) and `composer-runtime-api` (`^2`) are now required dependencies.
 - Faster suites: `--SKIPIF--` scripts run concurrently, Psalm runs go through a bounded process runner (no shell, one
   run per argument set), and each run gets `--no-cache` with its own cache directory. psalm-plugin-laravel's type
   suite (758 fixtures) went from 28.6s to about 10s wall time, and to about 4.6s with `--filter` on one test.
@@ -31,7 +32,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Removed
 
-- `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` sections: inline the expectation into the `.phpt` file.
+- `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` sections, now rejected as not supported: inline the expectation
+  into the `.phpt` file.
 - Progress output (the `showProgress` parameter of `create()`).
 
 ### Fixed
@@ -51,6 +53,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `vimeo/psalm` (`^6.10 || ^7.0.0-beta16`) and `composer-runtime-api` (`^2`) are now required dependencies.
 - Updated dependencies.
 
 [0.4.0]: https://github.com/alies-dev/psalm-tester/compare/0.3.0...HEAD
