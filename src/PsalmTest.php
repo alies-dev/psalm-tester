@@ -139,7 +139,9 @@ final readonly class PsalmTest
 
     /**
      * @return PhptSections
-     * @psalm-pure
+     * @psalm-pure This reads the filesystem via file(), so it is not truly pure; the
+     *     annotation is required only because Psalm's impure-function list omits file()
+     *     (unlike e.g. file_get_contents()), so Psalm would otherwise report MissingPureAnnotation.
      */
     private static function parsePhpt(string $phptFile): array
     {
