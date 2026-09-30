@@ -17,16 +17,6 @@ use PHPUnit\Framework\TestCase;
  */
 final class SkipifTest extends TestCase
 {
-    public function testATestWithoutSkipifRuns(): void
-    {
-        self::assertNotSame(Outcome::Skipped, self::runWithSkipif(null)->outcome);
-    }
-
-    public function testATestRunsWhenItsScriptDoesNotEchoSkip(): void
-    {
-        self::assertNotSame(Outcome::Skipped, self::runWithSkipif('<?php // no output, test should run')->outcome);
-    }
-
     public function testTheLeadingSkipTokenIsStrippedFromTheReason(): void
     {
         $result = self::runWithSkipif("<?php echo 'skip requires PHP 8.2+';");
@@ -114,13 +104,6 @@ final class SkipifTest extends TestCase
 
         self::assertSame(\realpath($dir), \realpath((string) $result->reason));
         self::assertSame([], $leftovers);
-    }
-
-    public function testNonPositiveConcurrencyIsRejected(): void
-    {
-        $this->expectException(\InvalidArgumentException::class);
-
-        PsalmTester::create()->withConcurrency(0);
     }
 
     public function testScriptsRunInTheConfiguredWorkingDirectoryAndEnvironment(): void

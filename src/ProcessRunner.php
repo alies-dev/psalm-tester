@@ -11,7 +11,7 @@ namespace AliesDev\PsalmTester;
  * early is not mistaken for a finished one. Completion is detected by polling proc_get_status().
  *
  * @internal
- * @psalm-type Job = array{command: string|non-empty-list<string>, env?: array<string, string>, cwd?: ?string}
+ * @psalm-type Job = array{command: non-empty-list<string>, env?: array<string, string>, cwd?: ?string}
  * @psalm-type LiveProcess = array{process: resource, stdoutFile: string, startedAt: float}
  */
 final class ProcessRunner
@@ -131,7 +131,7 @@ final class ProcessRunner
         }
 
         if (!\is_resource($process)) {
-            throw new \RuntimeException(\sprintf('Failed to start %s.', \is_array($job['command']) ? \implode(' ', $job['command']) : $job['command']));
+            throw new \RuntimeException(\sprintf('Failed to start %s.', \implode(' ', $job['command'])));
         }
 
         return ['process' => $process, 'stdoutFile' => $stdoutFile, 'startedAt' => \microtime(true)];

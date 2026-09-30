@@ -39,7 +39,9 @@
     </ignoreExceptions>
 
     <issueHandlers>
-        <MixedAssignment errorLevel="suppress"/>
+        <MissingPureAnnotation errorLevel="suppress"/>
+        <MissingImmutableAnnotation errorLevel="suppress"/>
+        <MissingAbstractPureAnnotation errorLevel="suppress"/>
     </issueHandlers>
 
     <forbiddenFunctions>

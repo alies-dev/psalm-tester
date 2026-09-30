@@ -6,46 +6,22 @@ namespace AliesDev\PsalmTester;
 
 /**
  * @internal
- * @psalm-immutable
  * @psalm-type PhptSections = array<non-empty-string, array{string, positive-int}>
  */
 final class PhptParser
 {
     /** TEST is php-src's description section: accepted, not used. */
-    private const SUPPORTED = ['TEST', 'SKIPIF', 'XFAIL', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
+    private const SUPPORTED = ['TEST', 'SKIPIF', 'XFAIL', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF'];
 
     /** Real run-tests.php sections whose semantics psalm-tester does not implement. */
-    private const NOT_SUPPORTED = ['CLEAN', 'ENV', 'INI'];
+    private const NOT_SUPPORTED = ['CLEAN', 'ENV', 'INI', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
 
     /**
      * Section name => [content, line number of the content's first line].
      *
      * @return PhptSections
-     * @psalm-pure
      */
     public static function parseSource(string $raw, string $phptFile): array
-    {
-        ['lines' => $lines, 'sections' => $bounds] = self::scan($raw, $phptFile);
-        $sections = [];
-
-        foreach ($bounds as $name => ['start' => $start, 'end' => $end]) {
-            $body = \array_map(self::stripEol(...), \array_slice($lines, $start, $end - $start));
-            $sections[$name] = [\implode("\n", $body), $start + 1];
-        }
-
-        /** @var PhptSections */
-        return $sections;
-    }
-
-    /**
-     * The one place that decides where sections are, shared by parseSource() and PhptRewriter so they
-     * cannot disagree: $lines keep their line ending, and a section's body is
-     * $lines[start] .. $lines[end - 1], right after its header line $lines[start - 1].
-     *
-     * @return array{lines: list<string>, sections: array<non-empty-string, array{start: int, end: int}>}
-     * @psalm-pure
-     */
-    public static function scan(string $raw, string $phptFile): array
     {
         $split = \preg_split('/(?<=\n)/', $raw, -1, \PREG_SPLIT_NO_EMPTY);
         $lines = $split === false ? [] : $split;
@@ -92,27 +68,12 @@ final class PhptParser
 
         $sections = [];
         foreach ($starts as $section => $start) {
-            $sections[$section] = ['start' => $start, 'end' => $ends[$section] ?? $start];
+            $end = $ends[$section] ?? $start;
+            $body = \implode('', \array_slice($lines, $start, $end - $start));
+            $sections[$section] = [(string) \preg_replace(['/\r\n/', '/\n\z/'], ["\n", ''], $body), $start + 1];
         }
 
-        return ['lines' => $lines, 'sections' => $sections];
-    }
-
-    /**
-     * Drops a line's "\n" or "\r\n", as file(..., FILE_IGNORE_NEW_LINES) did.
-     *
-     * @psalm-pure
-     */
-    public static function stripEol(string $line): string
-    {
-        if (\str_ends_with($line, "\n")) {
-            $line = \substr($line, 0, -1);
-
-            if (\str_ends_with($line, "\r")) {
-                $line = \substr($line, 0, -1);
-            }
-        }
-
-        return $line;
+        /** @var PhptSections */
+        return $sections;
     }
 }

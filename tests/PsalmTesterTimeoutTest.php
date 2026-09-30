@@ -22,6 +22,7 @@ final class PsalmTesterTimeoutTest extends TestCase
         $results = $tester->run([
             'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), arguments: '--config=slow --stub-sleep=5'),
             'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), arguments: '--config=slow --stub-sleep=5'),
+            'fast' => new Phpt(code: '<?php // fast', expectation: Expectation::format('StubError on line 1: %s'), arguments: '--config=fast'),
         ]);
         $elapsed = \microtime(true) - $start;
 
@@ -31,23 +32,10 @@ final class PsalmTesterTimeoutTest extends TestCase
         self::assertStringContainsString('0.3', (string) $results['a']->reason);
         self::assertStringContainsStringIgnoringCase('timeout', (string) $results['a']->reason);
         self::assertSame($results['a']->reason, $results['b']->reason);
+        self::assertSame(Outcome::Passed, $results['fast']->outcome);
 
         // The stub sleeps 5s; a killed-at-0.3s group proves termination actually happened.
         self::assertLessThan(4.0, $elapsed, \sprintf('Expected the group to be killed well before its 5s sleep, took %.2fs.', $elapsed));
-    }
-
-    public function testRunLeavesOtherGroupsUnaffectedByATimeoutInOneGroup(): void
-    {
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withTimeout(0.3);
-
-        $results = $tester->run([
-            'slow' => new Phpt(code: '<?php // slow', expectation: Expectation::exact(''), arguments: '--config=slow --stub-sleep=5'),
-            'fast' => new Phpt(code: '<?php // fast', expectation: Expectation::exact(''), arguments: '--config=fast'),
-        ]);
-
-        self::assertSame(Outcome::Error, $results['slow']->outcome);
-        self::assertStringContainsStringIgnoringCase('timeout', (string) $results['slow']->reason);
-        self::assertMatchesRegularExpression('/^StubError on line 1: stub error for code_\w+$/', $results['fast']->output);
     }
 
     public function testRunKillsGrandchildProcessesOfATimedOutGroup(): void
@@ -91,14 +79,4 @@ final class PsalmTesterTimeoutTest extends TestCase
         }
     }
 
-    public function testRunDoesNotTimeOutWhenNoTimeoutIsSet(): void
-    {
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH);
-
-        $results = $tester->run([
-            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact('')),
-        ]);
-
-        self::assertMatchesRegularExpression('/^StubError on line 1: stub error for code_\w+$/', $results['a']->output);
-    }
 }

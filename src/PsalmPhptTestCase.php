@@ -24,28 +24,16 @@ abstract class PsalmPhptTestCase extends TestCase
      */
     private static array $state = [];
 
-    /**
-     * A method, not a constant: a typed class constant needs PHP 8.3.
-     *
-     * @return array{results: array<string, Result>, errors: array<string, \Throwable>}
-     * @psalm-pure
-     */
-    private static function emptyState(): array
-    {
-        return ['results' => [], 'errors' => []];
-    }
 
     /**
      * Directory holding the *.phpt files, searched recursively.
      *
-     * @psalm-suppress MissingAbstractPureAnnotation, UnusedPsalmSuppress (Psalm 6 lacks the issue) a purity contract here would bind every override
      */
     abstract protected static function phptDirectory(): string;
 
     /**
      * Override to configure the tester (config, arguments, timeout, ...).
      *
-     * @psalm-suppress MissingPureAnnotation, UnusedPsalmSuppress (Psalm 6 lacks the issue) a purity contract here would bind every override
      */
     protected static function tester(): PsalmTester
     {
@@ -55,15 +43,11 @@ abstract class PsalmPhptTestCase extends TestCase
     #[\Override]
     public static function setUpBeforeClass(): void
     {
-        self::$state[static::class] = self::emptyState();
+        self::$state[static::class] = ['results' => [], 'errors' => []];
 
         // Unknown selection (e.g. a test run in a separate process): each test prepares itself.
         self::prepare(self::selectedRelPaths() ?? []);
     }
-
-    /**
-     * @psalm-external-mutation-free
-     */
     #[\Override]
     public static function tearDownAfterClass(): void
     {
@@ -86,7 +70,7 @@ abstract class PsalmPhptTestCase extends TestCase
     #[DataProvider('phptFiles')]
     final public function testPhpt(string $relPath): void
     {
-        $state = self::$state[static::class] ?? self::emptyState();
+        $state = self::$state[static::class] ?? ['results' => [], 'errors' => []];
 
         if (!isset($state['results'][$relPath]) && !isset($state['errors'][$relPath])) {
             self::$state[static::class] = $state;

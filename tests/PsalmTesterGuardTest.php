@@ -107,6 +107,13 @@ final class PsalmTesterGuardTest extends TestCase
         self::assertSame('crashed after deciding', $result->reason);
     }
 
+    public function testNonPositiveConcurrencyIsRejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        PsalmTester::create()->withConcurrency(0);
+    }
+
     private static function tester(): PsalmTester
     {
         return PsalmTester::create()->withPsalm(self::STUB_PATH);
