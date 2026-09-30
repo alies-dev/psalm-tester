@@ -51,15 +51,16 @@ final class PsalmTesterXfailTest extends TestCase
 
         self::assertSame(Outcome::XPassed, $result->outcome);
         $this->expectException(AssertionFailedError::class);
-        $this->expectExceptionMessage('XPASS:');
+        $this->expectExceptionMessage('XPASS: (in-code test) now matches its expectation; remove --XFAIL-- (known limitation)');
         $result->assert();
     }
 
+    /** The reason's trailing whitespace and blank lines are trimmed. */
     public function testFromFileParsedXfailWiresThroughToTheResult(): void
     {
         $file = \tempnam(\sys_get_temp_dir(), 'psalm_test_xfail_');
         self::assertNotFalse($file);
-        Assert::assertNotFalse(\file_put_contents($file, "--XFAIL--\nfilebased reason\n--FILE--\n<?php // filebased\n--EXPECT--\nwrong\n"));
+        Assert::assertNotFalse(\file_put_contents($file, "--XFAIL--\nfilebased reason  \n\n--FILE--\n<?php // filebased\n--EXPECT--\nwrong\n"));
 
         try {
             $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->runOne(Phpt::fromFile($file));

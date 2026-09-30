@@ -48,7 +48,7 @@ final readonly class Phpt
             arguments: $sections['ARGS'][0] ?? '',
             codeFirstLine: $sections['FILE'][1],
             skipif: $sections['SKIPIF'][0] ?? null,
-            xfail: $sections['XFAIL'][0] ?? null,
+            xfail: isset($sections['XFAIL']) ? \rtrim($sections['XFAIL'][0]) : null,
             path: $path,
         );
     }
