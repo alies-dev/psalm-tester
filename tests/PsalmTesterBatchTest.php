@@ -212,6 +212,26 @@ final class PsalmTesterBatchTest extends TestCase
         }
     }
 
+    public function testRunBatchCleansUpTemporaryCodeFilesAfterReturning(): void
+    {
+        $tempDir = \sys_get_temp_dir() . '/psalm_tester_code_cleanup_' . \bin2hex(\random_bytes(4));
+        self::assertTrue(\mkdir($tempDir, 0777, true));
+
+        try {
+            $tester = PsalmTester::create(psalmPath: self::STUB_PATH, temporaryDirectory: $tempDir, showProgress: false);
+
+            $tester->runBatch([
+                'a' => new PsalmTest(code: '<?php // a', constraint: new IsIdentical('')),
+                'b' => new PsalmTest(code: '<?php // b', constraint: new IsIdentical(''), arguments: '--config=b'),
+            ]);
+
+            self::assertSame([], \glob($tempDir . '/code_*'), 'Per-test temporary code files must be removed once runBatch returns.');
+        } finally {
+            self::assertSame([], \glob($tempDir . '/*'));
+            @\rmdir($tempDir);
+        }
+    }
+
     /**
      * @return list<string>
      */
