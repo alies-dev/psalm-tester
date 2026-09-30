@@ -1,0 +1,74 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// Stub "psalm" executable used by PsalmTesterBatchTest. Reads STUB_SLEEP / STUB_MODE
+// from the environment; emits JSON on stdout. Files are the argv entries that exist on disk.
+
+$sleep = (float) (\getenv('STUB_SLEEP') ?: '0');
+if ($sleep > 0) {
+    \usleep((int) ($sleep * 1_000_000));
+}
+
+$mode = (string) (\getenv('STUB_MODE') ?: 'per_file');
+
+if ($mode === 'invalid_json') {
+    \fwrite(\STDOUT, 'NOT JSON');
+    exit(0);
+}
+
+if ($mode === 'env_record') {
+    $logDir = (string) \getenv('STUB_ENV_LOG_DIR');
+    if ($logDir !== '' && \is_dir($logDir)) {
+        $payload = [
+            'pid' => \getmypid(),
+            'XDG_CACHE_HOME' => (string) \getenv('XDG_CACHE_HOME'),
+            'TMPDIR' => (string) \getenv('TMPDIR'),
+            'TMP' => (string) \getenv('TMP'),
+            'TEMP' => (string) \getenv('TEMP'),
+            'sys_get_temp_dir' => \sys_get_temp_dir(),
+        ];
+        \file_put_contents(
+            $logDir . '/' . \getmypid() . '_' . \bin2hex(\random_bytes(4)) . '.json',
+            (string) \json_encode($payload),
+        );
+    }
+    \fwrite(\STDOUT, '[]');
+    exit(0);
+}
+
+/** @var list<string> $files */
+$files = [];
+foreach (\array_slice($argv, 1) as $arg) {
+    if (\is_string($arg) && \is_file($arg)) {
+        $files[] = $arg;
+    }
+}
+
+$errors = [];
+if ($mode === 'large') {
+    foreach ($files as $file) {
+        for ($i = 0; $i < 3000; $i++) {
+            $errors[] = [
+                'type' => 'BigError',
+                'line_from' => 1,
+                'column_from' => 1,
+                'message' => 'padding ' . \str_repeat('x', 200),
+                'file_path' => $file,
+            ];
+        }
+    }
+} else {
+    foreach ($files as $file) {
+        $errors[] = [
+            'type' => 'StubError',
+            'line_from' => 1,
+            'column_from' => 1,
+            'message' => 'stub error for ' . \basename($file),
+            'file_path' => $file,
+        ];
+    }
+}
+
+\fwrite(\STDOUT, (string) \json_encode($errors));
