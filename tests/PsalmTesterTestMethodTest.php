@@ -93,6 +93,32 @@ final class PsalmTesterTestMethodTest extends TestCase
         self::assertTrue(true);
     }
 
+    public function testTestIsolatesCacheAndEnvLikeRunBatch(): void
+    {
+        $logDir = $this->makeScratchDir();
+
+        try {
+            \putenv('STUB_MODE=env_record');
+            \putenv('STUB_ENV_LOG_DIR=' . $logDir);
+
+            self::createStubTester()->test(new PsalmTest(code: '<?php // env', constraint: new IsIdentical('')));
+
+            $files = \glob($logDir . '/*.json') ?: [];
+            self::assertCount(1, $files, 'The stub should have been invoked exactly once.');
+
+            /** @var array{XDG_CACHE_HOME: string} $record */
+            $record = \json_decode((string) \file_get_contents($files[0]), true, flags: \JSON_THROW_ON_ERROR);
+
+            // Same per-call cache-dir isolation runBatch() gives its groups (see
+            // PsalmTesterBatchTest::testRunBatchGivesEachGroupIsolatedCacheDirAndCleansUp),
+            // proving test() no longer shells out through the parent's inherited environment.
+            self::assertStringStartsWith(\sys_get_temp_dir() . '/psalm_test/cache_', $record['XDG_CACHE_HOME']);
+        } finally {
+            \putenv('STUB_MODE');
+            \putenv('STUB_ENV_LOG_DIR');
+        }
+    }
+
     public function testTestRunsRealPsalmAndFormatsOffsetErrorLine(): void
     {
         $tester = PsalmTester::create(showProgress: false);

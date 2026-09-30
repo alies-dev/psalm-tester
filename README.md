@@ -158,6 +158,10 @@ For plugins with expensive boot costs (e.g., Laravel plugin boots a full applica
 `runBatch()` groups tests by their argument string and runs **one Psalm invocation per group**,
 then distributes results back to individual tests using the `file_path` field in Psalm's JSON output.
 
+`test()` runs through the exact same code path as a `runBatch()` call with one test (proc_open,
+per-call cache/env isolation, and — if configured — the timeout above), so its formatted output and
+behavior are identical to running that same `PsalmTest` through `runBatch()`.
+
 ```php
 use PHPUnit\Framework\Assert;
 use PHPUnit\Framework\Attributes\DataProvider;

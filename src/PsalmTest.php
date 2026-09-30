@@ -239,12 +239,31 @@ final readonly class PsalmTest
     }
 
     /**
+     * Every caller (fromPhptFile(), getSkipReason(s)()) parses by file path, so memoizing here
+     * means a .phpt file is only ever read from disk once, no matter how many of those callers
+     * a consumer chains for the same file.
+     *
+     * @return PhptSections
+     * @psalm-external-mutation-free Only mutates its own function-static cache, never
+     *     anything visible from outside this function.
+     */
+    private static function parsePhpt(string $phptFile): array
+    {
+        // A function-static local, not a class property: the class is declared `readonly`,
+        // which (unlike per-property readonly) forbids mutable static class properties outright.
+        /** @var array<string, PhptSections> $cache */
+        static $cache = [];
+
+        return $cache[$phptFile] ??= self::doParsePhpt($phptFile);
+    }
+
+    /**
      * @return PhptSections
      * @psalm-pure This reads the filesystem via file(), so it is not truly pure; the
      *     annotation is required only because Psalm's impure-function list omits file()
      *     (unlike e.g. file_get_contents()), so Psalm would otherwise report MissingPureAnnotation.
      */
-    private static function parsePhpt(string $phptFile): array
+    private static function doParsePhpt(string $phptFile): array
     {
         $name = null;
         $sections = [];

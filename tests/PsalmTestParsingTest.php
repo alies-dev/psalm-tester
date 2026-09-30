@@ -154,6 +154,28 @@ final class PsalmTestParsingTest extends TestCase
                 PHPT));
     }
 
+    public function testFileIsParsedOnceAcrossGetSkipReasonAndFromPhptFile(): void
+    {
+        $file = $this->writePhpt(<<<'PHPT'
+                --SKIPIF--
+                <?php // never skips
+                --FILE--
+                <?php
+                $x = 1;
+                --EXPECT--
+                PHPT);
+
+        // Prime the parse cache via getSkipReason() first.
+        self::assertNull(PsalmTest::getSkipReason($file));
+
+        // If fromPhptFile() re-read the file from disk instead of reusing the cached
+        // parse, this would throw (file() fails once the path no longer exists).
+        \unlink($file);
+        $test = PsalmTest::fromPhptFile($file);
+
+        self::assertSame("<?php\n\$x = 1;", $test->code);
+    }
+
     private function writePhpt(string $contents): string
     {
         // Fixture bodies above are indented to match the calling heredoc; strip that

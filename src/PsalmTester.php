@@ -458,49 +458,17 @@ final readonly class PsalmTester
         $this->writeProgressEnd($groupCount);
     }
 
+    /**
+     * Runs a single test. Goes through the same proc_open + per-group cache/env isolation
+     * path as runBatch() (a group of one), so a lone test() call and a runBatch() call with
+     * the same PsalmTest produce byte-identical formatted output.
+     */
     public function test(PsalmTest $test): void
     {
-        $codeFile = $this->createTemporaryCodeFile($test->code);
+        $results = $this->runBatch(['test' => $test]);
 
-        try {
-            $args = (string) \preg_replace('/\s+/', ' ', \trim($test->arguments ?: $this->defaultArguments));
-            $this->writeProgressStart($args);
-            $output = $this->runPsalm($args, $codeFile);
-            $decoded = $this->decodeOutput($output, $args);
-            $formattedOutput = $this->formatErrors($decoded, $test->codeFirstLine);
-
-            $this->writeProgressEnd(1);
-            Assert::assertThat($formattedOutput, $test->constraint);
-        } finally {
-            @unlink($codeFile);
-        }
-    }
-
-    /**
-     * @param string $args Pre-built argument string — trusted input from $this->defaultArguments or PsalmTest::$arguments (parsed from .phpt files).
-     *                     Not escaped, as it contains multiple shell-level arguments.
-     */
-    private function runPsalm(string $args, string ...$files): string
-    {
-        // Collapse any whitespace (including newlines from --ARGS-- sections) to single spaces
-        // to prevent newlines from being interpreted as shell command separators.
-        $args = (string) \preg_replace('/\s+/', ' ', \trim($args));
-
-        $command = \sprintf(
-            '%s --output-format=json %s %s',
-            escapeshellarg($this->psalmPath),
-            $args,
-            implode(' ', array_map(escapeshellarg(...), $files)),
-        );
-
-        /** @psalm-suppress ForbiddenCode */
-        $output = shell_exec($command);
-
-        if (!\is_string($output)) {
-            throw new \RuntimeException(\sprintf('Failed to run command %s.', $command));
-        }
-
-        return $output;
+        /** @psalm-suppress PossiblyUndefinedStringArrayOffset runBatch() always seeds every input key. */
+        Assert::assertThat($results['test'], $test->constraint);
     }
 
     /**
