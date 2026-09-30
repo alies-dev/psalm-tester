@@ -84,7 +84,7 @@ final readonly class PsalmTest
      */
     public static function getSkipReasons(array $phptFiles, ?int $concurrency = null): array
     {
-        $concurrency ??= self::detectCpuCount();
+        $concurrency ??= ProcessRunner::cpuCount();
 
         if ($concurrency < 1) {
             throw new \InvalidArgumentException('$concurrency must be at least 1.');
@@ -92,114 +92,57 @@ final readonly class PsalmTest
 
         /** @var array<string, ?string> $results */
         $results = [];
-        /** @var array<string, string> $scriptsByFile */
-        $scriptsByFile = [];
+        /** @var array<string, array{command: non-empty-list<string>}> $jobs */
+        $jobs = [];
+        /** @var list<string> $scriptFiles */
+        $scriptFiles = [];
 
-        foreach ($phptFiles as $phptFile) {
-            $sections = self::parsePhpt($phptFile);
-            $results[$phptFile] = null;
+        try {
+            foreach ($phptFiles as $phptFile) {
+                $sections = self::parsePhpt($phptFile);
+                $results[$phptFile] = null;
 
-            if (isset($sections[self::SKIPIF])) {
-                $scriptsByFile[$phptFile] = $sections[self::SKIPIF][0];
+                if (isset($sections[self::SKIPIF])) {
+                    $scriptFile = self::writeSkipifScript($sections[self::SKIPIF][0], $phptFile);
+                    $scriptFiles[] = $scriptFile;
+                    // Its own PHP process, so die()/exit() in the script cannot end this run.
+                    $jobs[$phptFile] = ['command' => [\PHP_BINARY, $scriptFile]];
+                }
             }
-        }
 
-        foreach (\array_chunk($scriptsByFile, $concurrency, preserve_keys: true) as $batch) {
-            foreach (self::runSkipifBatch($batch) as $phptFile => $reason) {
-                $results[$phptFile] = $reason;
+            ProcessRunner::run(
+                $jobs,
+                $concurrency,
+                \sys_get_temp_dir(),
+                static function (string $phptFile, ?string $output) use (&$results): void {
+                    $output = \trim((string) $output);
+                    $results[$phptFile] = \stripos($output, 'skip') === 0 ? \ltrim(\substr($output, 4)) : null;
+                },
+            );
+        } finally {
+            foreach ($scriptFiles as $scriptFile) {
+                @\unlink($scriptFile);
             }
         }
 
         return $results;
     }
 
-    /**
-     * Launches one process per script, then reads each to completion in turn. Since every
-     * process in the batch is already running by the time we start reading, wall time is
-     * bounded by the slowest script in the batch, not their sum.
-     *
-     * @param array<string, string> $scriptsByFile
-     * @return array<string, ?string>
-     */
-    private static function runSkipifBatch(array $scriptsByFile): array
+    private static function writeSkipifScript(string $script, string $phptFile): string
     {
-        /** @var array<string, array{tempFile: string, process: resource, stdout: ?resource}> */
-        $running = [];
+        $scriptFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
 
-        try {
-            foreach ($scriptsByFile as $phptFile => $script) {
-                $running[$phptFile] = self::startSkipifProcess($script, $phptFile);
-            }
-
-            $results = [];
-
-            foreach (array_keys($running) as $phptFile) {
-                $stdout = $running[$phptFile]['stdout'];
-                \assert($stdout !== null);
-                $output = \trim((string) \stream_get_contents($stdout));
-                \fclose($stdout);
-                \proc_close($running[$phptFile]['process']);
-                $running[$phptFile]['stdout'] = null; // mark closed so the finally below skips it
-                $results[$phptFile] = \stripos($output, 'skip') === 0 ? \ltrim(\substr($output, 4)) : null;
-            }
-
-            return $results;
-        } finally {
-            // If startSkipifProcess() throws partway through the first loop above, or the
-            // second loop throws before finishing, any process still open here (stdout !== null)
-            // was started but never drained/closed — close it too, not just its temp file.
-            foreach ($running as $proc) {
-                if ($proc['stdout'] !== null) {
-                    @\fclose($proc['stdout']);
-                    @\proc_close($proc['process']);
-                }
-                @\unlink($proc['tempFile']);
-            }
+        if ($scriptFile === false) {
+            throw new \RuntimeException(\sprintf('Failed to create temporary SKIPIF file for %s.', $phptFile));
         }
-    }
 
-    /**
-     * @return array{tempFile: string, process: resource, stdout: resource}
-     */
-    private static function startSkipifProcess(string $script, string $phptFile): array
-    {
-        $tempFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
+        if (\file_put_contents($scriptFile, $script) === false) {
+            @\unlink($scriptFile);
 
-        if ($tempFile === false || \file_put_contents($tempFile, $script) === false) {
             throw new \RuntimeException(\sprintf('Failed to write temporary SKIPIF file for %s.', $phptFile));
         }
 
-        // stderr inherits the parent's (like shell_exec did), not a pipe: a closed/unread pipe
-        // means the script's first stderr write (a warning, or display_errors=stderr) raises
-        // SIGPIPE and kills it before it ever reaches its skip echo.
-        $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => \STDERR];
-        $pipes = [];
-        $process = \proc_open([\PHP_BINARY, $tempFile], $descriptors, $pipes);
-
-        if (!\is_resource($process)) {
-            @\unlink($tempFile);
-
-            throw new \RuntimeException(\sprintf('Failed to run SKIPIF script for %s.', $phptFile));
-        }
-
-        \fclose($pipes[0]);
-
-        return ['tempFile' => $tempFile, 'process' => $process, 'stdout' => $pipes[1]];
-    }
-
-    private static function detectCpuCount(): int
-    {
-        if (\PHP_OS_FAMILY === 'Windows') {
-            $count = (int) \getenv('NUMBER_OF_PROCESSORS');
-
-            return $count > 0 ? $count : 1;
-        }
-
-        $probe = \PHP_OS_FAMILY === 'Darwin' ? 'sysctl -n hw.ncpu' : 'nproc';
-        /** @psalm-suppress ForbiddenCode */
-        $count = (int) \trim((string) @\shell_exec($probe));
-
-        return $count > 0 ? $count : 1;
+        return $scriptFile;
     }
 
     /**
