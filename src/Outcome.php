@@ -16,7 +16,7 @@ enum Outcome
     case XFailed;
     /** Reserved for --XFAIL-- support: passed although expected to fail. */
     case XPassed;
-    /** Reserved for update mode: the expectation was rewritten to the actual output. */
+    /** Update mode rewrote the --EXPECT-- section to the actual output; $reason names the file. */
     case Updated;
     /** Psalm could not produce a result, e.g. its group timed out; $reason says why. */
     case Error;

@@ -194,14 +194,19 @@ arguments and the timeout. Other runs are unaffected.
 ## Update mode
 
 With `withUpdate(true)` (or the env var `PSALM_TESTER_UPDATE=1`, e.g. `PSALM_TESTER_UPDATE=1 vendor/bin/phpunit`),
-`run()` rewrites a `Failed` test's `--EXPECT--` section in place with the actual output and reports it as
-`Outcome::Updated` (`assert()` passes); every other byte of the file (other sections, line endings, trailing newline)
-is left untouched.
+`run()` rewrites a `Failed` test's `--EXPECT--` section with the actual output and reports it as `Outcome::Updated`
+(`assert()` passes). Only the lines the parser reads as the expectation are replaced; headers (including trailing
+text), other sections, line endings and whether the file ends with a newline are kept. The file is written to a
+temporary file in the same directory and renamed over the original, keeping its permissions.
 
-`--EXPECTF--`, `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` tests are never rewritten (a format string or an
-external file has no single "actual output" to substitute), and neither are `--XFAIL--` tests (see below): these stay
-`Outcome::Failed` and are listed once on STDERR as `not updated: <path> (<reason>)`. Rewritten files are listed as
-`updated: <path>`.
+A test stays `Outcome::Failed`, with `not updated: <path> (<why>)` as its reason and in its failure message, when it
+cannot be rewritten safely: `--EXPECTF--`, `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` tests (a format string or
+an external file has no single "actual output" to substitute), `--XFAIL--` tests (see below), output with a line that
+would read as a section header, or a file that changed since it was parsed in a way the rewriter cannot place (e.g. a
+second `--EXPECT--` section). Such a failure affects only that file; the rest of the run continues.
+
+With `withProgress(true)`, each `updated: <path>` and `not updated: ...` line is also printed on STDERR. Without it
+update mode prints nothing, so it works under PHPUnit's `--process-isolation`.
 
 ## Upgrading from 0.3
 
@@ -222,3 +227,4 @@ external file has no single "actual output" to substitute), and neither are `--X
 | `$tester->test($test)` | `$tester->runOne($phpt)->assert()` |
 | a hand-written `TestCase` with discovery, a data provider and `runBatch()` | `PsalmPhptTestCase` (see [Quick start](#quick-start)) |
 | unknown sections threw `Section X is not supported.` | still throw, naming the file; `--CLEAN--`, `--ENV--`, `--INI--` get a "not supported by psalm-tester" message |
+| a repeated section silently replaced the earlier one | a repeated section throws `Duplicate section --X--` |

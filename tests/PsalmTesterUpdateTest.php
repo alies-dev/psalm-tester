@@ -7,6 +7,8 @@ namespace AliesDev\PsalmTester\Tests;
 use AliesDev\PsalmTester\Outcome;
 use AliesDev\PsalmTester\Phpt;
 use AliesDev\PsalmTester\PsalmTester;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\ExpectationFailedException;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -20,6 +22,9 @@ final class PsalmTesterUpdateTest extends TestCase
 
     /** @var list<string> */
     private array $tempFiles = [];
+
+    /** @var list<string> */
+    private array $tempDirs = [];
 
     protected function setUp(): void
     {
@@ -35,6 +40,16 @@ final class PsalmTesterUpdateTest extends TestCase
             @\unlink($file);
         }
         $this->tempFiles = [];
+
+        foreach ($this->tempDirs as $dir) {
+            foreach (\glob($dir . '/{,.}*', \GLOB_BRACE) ?: [] as $entry) {
+                if (\is_file($entry)) {
+                    @\unlink($entry);
+                }
+            }
+            @\rmdir($dir);
+        }
+        $this->tempDirs = [];
     }
 
     public function testUpdateRewritesTheExpectSectionInPlace(): void
@@ -46,7 +61,7 @@ final class PsalmTesterUpdateTest extends TestCase
 
         self::assertSame(Outcome::Updated, $result->outcome);
         self::assertSame(
-            "--FILE--\n<?php // rewrite-me\n--EXPECT--\nStubError on line 2: // rewrite-me",
+            "--FILE--\n<?php // rewrite-me\n--EXPECT--\nStubError on line 2: // rewrite-me\n",
             \file_get_contents($file),
         );
     }
@@ -86,10 +101,10 @@ final class PsalmTesterUpdateTest extends TestCase
         self::assertSame($before, \file_get_contents($file));
     }
 
-    public function testNotUpdatedFilesAreReportedOnStderr(): void
+    public function testNotUpdatedFilesAreReportedOnStderrWithProgress(): void
     {
         $file = $this->writePhpt("--FILE--\n<?php // report\n--EXPECTF--\nWrongType on line %d: %s\n");
-        $stderr = $this->runInSubprocess($file, true);
+        $stderr = $this->runInSubprocess($file, true, true);
 
         self::assertStringContainsString(
             \sprintf('not updated: %s (EXPECTF cannot be rewritten)', $file),
@@ -97,12 +112,23 @@ final class PsalmTesterUpdateTest extends TestCase
         );
     }
 
-    public function testUpdatedFilesAreReportedOnStderr(): void
+    public function testUpdatedFilesAreReportedOnStderrWithProgress(): void
     {
         $file = $this->writePhpt("--FILE--\n<?php // report-updated\n--EXPECT--\nstale\n");
-        $stderr = $this->runInSubprocess($file, true);
+        $stderr = $this->runInSubprocess($file, true, true);
 
         self::assertStringContainsString(\sprintf('updated: %s', $file), $stderr);
+    }
+
+    public function testUpdateModeWritesNothingToStderrWithoutProgress(): void
+    {
+        // Any stderr fails a --process-isolation test, so the report stays in Result::$reason.
+        $updated = $this->writePhpt("--FILE--\n<?php // quiet\n--EXPECT--\nstale\n");
+        $ineligible = $this->writePhpt("--FILE--\n<?php // quiet-fmt\n--EXPECTF--\nWrongType on line %d: %s\n");
+
+        self::assertSame('', $this->runInSubprocess($updated, true, false));
+        self::assertSame('', $this->runInSubprocess($ineligible, true, false));
+        self::assertStringContainsString('StubError on line 2: // quiet', (string) \file_get_contents($updated));
     }
 
     public function testUpdatePreservesCrlfLineEndings(): void
@@ -113,9 +139,98 @@ final class PsalmTesterUpdateTest extends TestCase
             ->runOne(Phpt::fromFile($file));
 
         self::assertSame(
-            "--FILE--\r\n<?php // crlf\r\n--EXPECT--\r\nStubError on line 2: // crlf",
+            "--FILE--\r\n<?php // crlf\r\n--EXPECT--\r\nStubError on line 2: // crlf\r\n",
             \file_get_contents($file),
         );
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function provideRewrites(): iterable
+    {
+        $out = 'StubError on line 2: // a';
+        yield 'EXPECT in the middle' => ["--FILE--\n<?php // a\n--EXPECT--\nstale\n--ARGS--\n--no-cache\n", "--FILE--\n<?php // a\n--EXPECT--\n{$out}\n--ARGS--\n--no-cache\n"];
+        // One body line before and after, so the FILE section (and its reported line) stays put.
+        yield 'EXPECT before FILE' => ["--EXPECT--\nstale\n--FILE--\n<?php // a\n", "--EXPECT--\nStubError on line 4: // a\n--FILE--\n<?php // a\n"];
+        yield 'EXPECT last, final newline' => ["--FILE--\n<?php // a\n--EXPECT--\nstale\n", "--FILE--\n<?php // a\n--EXPECT--\n{$out}\n"];
+        yield 'EXPECT last, no final newline' => ["--FILE--\n<?php // a\n--EXPECT--\nstale", "--FILE--\n<?php // a\n--EXPECT--\n{$out}"];
+        yield 'EXPECT header at EOF' => ["--FILE--\n<?php // a\n--EXPECT--", "--FILE--\n<?php // a\n--EXPECT--\n{$out}"];
+        yield 'padded next header' => ["--FILE--\n<?php // a\n--EXPECT--\nstale\n--ARGS-- \n--no-cache\n", "--FILE--\n<?php // a\n--EXPECT--\n{$out}\n--ARGS-- \n--no-cache\n"];
+        yield 'padded EXPECT header' => ["--FILE--\n<?php // a\n--EXPECT--  \nstale\n", "--FILE--\n<?php // a\n--EXPECT--  \n{$out}\n"];
+        yield 'CRLF' => ["--FILE--\r\n<?php // a\r\n--EXPECT--\r\nstale\r\n--ARGS--\r\n--no-cache\r\n", "--FILE--\r\n<?php // a\r\n--EXPECT--\r\n{$out}\r\n--ARGS--\r\n--no-cache\r\n"];
+        yield 'empty output' => ["--ARGS--\n--stub-mode=empty\n--FILE--\n<?php // a\n--EXPECT--\nstale\n--SKIPIF--\n<?php\n", "--ARGS--\n--stub-mode=empty\n--FILE--\n<?php // a\n--EXPECT--\n--SKIPIF--\n<?php\n"];
+        yield 'replacement-looking text' => ["--FILE--\n<?php // $1 \\0 \\\\ \${1}\n--EXPECT--\nstale\n", "--FILE--\n<?php // $1 \\0 \\\\ \${1}\n--EXPECT--\nStubError on line 2: // $1 \\0 \\\\ \${1}\n"];
+        yield 'multi-line output' => ["--ARGS--\n--stub-mode=two_lines\n--FILE--\n<?php // a\n--EXPECT--\nstale\n", "--ARGS--\n--stub-mode=two_lines\n--FILE--\n<?php // a\n--EXPECT--\nStubError on line 4: first\nStubError on line 5: second\n"];
+    }
+
+    #[DataProvider('provideRewrites')]
+    public function testUpdateReplacesExactlyTheExpectBodyAndIsIdempotent(string $before, string $after): void
+    {
+        $dir = $this->makeDir();
+        $file = $dir . '/test.phpt';
+        self::assertNotFalse(\file_put_contents($file, $before));
+        \chmod($file, 0640);
+        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true);
+
+        $result = $tester->runOne(Phpt::fromFile($file));
+
+        self::assertSame(Outcome::Updated, $result->outcome, (string) $result->reason);
+        self::assertSame($after, \file_get_contents($file));
+        \clearstatcache();
+        self::assertSame(0640, \fileperms($file) & 0777);
+        self::assertSame(['test.phpt'], \array_values(\array_diff(\scandir($dir) ?: [], ['.', '..'])), 'The atomic write must not leave temp files.');
+        self::assertSame(Outcome::Passed, $tester->runOne(Phpt::fromFile($file))->outcome);
+    }
+
+    public function testOutputWithASectionHeaderLineIsNotWritten(): void
+    {
+        $contents = "--ARGS--\n--stub-mode=header_message\n--FILE--\n<?php // a\n--EXPECT--\nstale\n";
+        $file = $this->writePhpt($contents);
+
+        $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)->runOne(Phpt::fromFile($file));
+
+        self::assertSame(Outcome::Failed, $result->outcome);
+        self::assertStringContainsString('not updated: ', (string) $result->reason);
+        self::assertStringContainsString('section header', (string) $result->reason);
+        self::assertSame($contents, \file_get_contents($file));
+    }
+
+    public function testADuplicateExpectSectionIsRejectedByTheParser(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/Duplicate section --EXPECT--/');
+
+        Phpt::fromFile($this->writePhpt("--FILE--\n<?php\n--EXPECT--\na\n--EXPECT--\nb\n"));
+    }
+
+    public function testARewriteFailureLeavesThatFileAloneAndTheRestOfTheBatchContinues(): void
+    {
+        $broken = $this->writePhpt("--FILE--\n<?php // broken\n--EXPECT--\nstale\n");
+        $fine = $this->writePhpt("--FILE--\n<?php // fine\n--EXPECT--\nstale\n");
+        $phpts = ['broken' => Phpt::fromFile($broken), 'fine' => Phpt::fromFile($fine)];
+        // Changed after parsing: the rewriter re-reads the file and must refuse to guess.
+        $duplicated = "--FILE--\n<?php // broken\n--EXPECT--\nstale\n--EXPECT--\nstale\n";
+        self::assertNotFalse(\file_put_contents($broken, $duplicated));
+
+        $results = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)->run($phpts);
+
+        self::assertSame(Outcome::Failed, $results['broken']->outcome);
+        self::assertStringContainsString(\sprintf('not updated: %s (', $broken), (string) $results['broken']->reason);
+        self::assertStringContainsString('Duplicate section --EXPECT--', (string) $results['broken']->reason);
+        self::assertSame($duplicated, \file_get_contents($broken));
+        self::assertSame(Outcome::Updated, $results['fine']->outcome);
+    }
+
+    public function testTheNotUpdatedReasonIsPartOfTheFailureMessage(): void
+    {
+        $file = $this->writePhpt("--FILE--\n<?php // fmt\n--EXPECTF--\nWrongType on line %d: %s\n");
+        $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)->runOne(Phpt::fromFile($file));
+
+        $this->expectException(ExpectationFailedException::class);
+        $this->expectExceptionMessage(\sprintf('not updated: %s (EXPECTF cannot be rewritten)', $file));
+
+        $result->assert();
     }
 
     public function testEnvVariableSetsTheDefault(): void
@@ -141,6 +256,15 @@ final class PsalmTesterUpdateTest extends TestCase
         self::assertSame($contents, \file_get_contents($file));
     }
 
+    private function makeDir(): string
+    {
+        $dir = \sys_get_temp_dir() . '/psalm_test_update_dir_' . \bin2hex(\random_bytes(4));
+        self::assertTrue(\mkdir($dir));
+        $this->tempDirs[] = $dir;
+
+        return $dir;
+    }
+
     private function writePhpt(string $contents): string
     {
         $file = \tempnam(\sys_get_temp_dir(), 'psalm_test_update_');
@@ -155,16 +279,16 @@ final class PsalmTesterUpdateTest extends TestCase
      * Runs update mode on $file in a subprocess so STDERR (written directly to the STDERR
      * constant, which cannot be intercepted in-process) can be captured.
      */
-    private function runInSubprocess(string $file, bool $update): string
+    private function runInSubprocess(string $file, bool $update, bool $progress): string
     {
         $script = <<<'PHP'
             require $argv[1];
-            $tester = AliesDev\PsalmTester\PsalmTester::create()->withPsalm($argv[2])->withUpdate((bool) $argv[3]);
+            $tester = AliesDev\PsalmTester\PsalmTester::create()->withPsalm($argv[2])->withUpdate((bool) $argv[3])->withProgress((bool) $argv[5]);
             $tester->runOne(AliesDev\PsalmTester\Phpt::fromFile($argv[4]));
             PHP;
         $pipes = [];
         $process = \proc_open(
-            [\PHP_BINARY, '-r', $script, \dirname(__DIR__) . '/vendor/autoload.php', self::STUB_PATH, $update ? '1' : '', $file],
+            [\PHP_BINARY, '-r', $script, \dirname(__DIR__) . '/vendor/autoload.php', self::STUB_PATH, $update ? '1' : '', $file, $progress ? '1' : ''],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             null,

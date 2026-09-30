@@ -60,7 +60,7 @@ final readonly class Result
     public function assert(): void
     {
         match ($this->outcome) {
-            Outcome::Passed, Outcome::Failed => Assert::assertThat($this->output, $this->phpt->expectation->constraint()),
+            Outcome::Passed, Outcome::Failed => Assert::assertThat($this->output, $this->phpt->expectation->constraint(), (string) $this->reason),
             Outcome::Skipped => Assert::markTestSkipped((string) $this->reason),
             Outcome::XFailed => Assert::markTestIncomplete((string) $this->reason),
             Outcome::XPassed => Assert::fail('XPASS: the test passed, remove its --XFAIL-- section. ' . (string) $this->reason),
