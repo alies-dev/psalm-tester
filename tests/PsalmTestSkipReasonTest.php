@@ -87,6 +87,79 @@ final class PsalmTestSkipReasonTest extends TestCase
                 PHPT)));
     }
 
+    public function testGetSkipReasonsReturnsOneEntryPerFileInInputOrder(): void
+    {
+        $noSkip = $this->writePhpt(<<<'PHPT'
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT);
+        $skipped = $this->writePhpt(<<<'PHPT'
+                --SKIPIF--
+                <?php echo 'skip nope';
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT);
+        $notSkipped = $this->writePhpt(<<<'PHPT'
+                --SKIPIF--
+                <?php // runs
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT);
+
+        $reasons = PsalmTest::getSkipReasons([$skipped, $noSkip, $notSkipped]);
+
+        self::assertSame([$skipped, $noSkip, $notSkipped], \array_keys($reasons));
+        self::assertSame('nope', $reasons[$skipped]);
+        self::assertNull($reasons[$noSkip]);
+        self::assertNull($reasons[$notSkipped]);
+    }
+
+    public function testGetSkipReasonIsAWrapperAroundGetSkipReasons(): void
+    {
+        $file = $this->writePhpt(<<<'PHPT'
+                --SKIPIF--
+                <?php echo 'skip via wrapper';
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT);
+
+        self::assertSame(PsalmTest::getSkipReasons([$file])[$file], PsalmTest::getSkipReason($file));
+    }
+
+    public function testGetSkipReasonsRunsWithinBoundedConcurrency(): void
+    {
+        $files = [];
+        for ($i = 0; $i < 4; $i++) {
+            $files[] = $this->writePhpt(<<<'PHPT'
+                    --SKIPIF--
+                    <?php usleep(300000);
+                    --FILE--
+                    <?php
+                    --EXPECT--
+                    PHPT);
+        }
+
+        $start = \microtime(true);
+        $reasons = PsalmTest::getSkipReasons($files, concurrency: 2);
+        $elapsed = \microtime(true) - $start;
+
+        self::assertSame([null, null, null, null], \array_values($reasons));
+        // 4 files at concurrency=2 means 2 sequential batches of ~0.3s each;
+        // serial execution would take ~1.2s, so this bounds it well below that.
+        self::assertLessThan(0.9, $elapsed, \sprintf('Expected roughly 2 concurrent batches (~0.6s), got %.2fs.', $elapsed));
+    }
+
+    public function testGetSkipReasonsRejectsNonPositiveConcurrency(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        PsalmTest::getSkipReasons([], concurrency: 0);
+    }
+
     private function writePhpt(string $contents): string
     {
         $file = \tempnam(\sys_get_temp_dir(), 'psalm_test_skipif_');

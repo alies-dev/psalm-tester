@@ -130,6 +130,26 @@ final class MyPsalmTest extends TestCase
 
 The SKIPIF script runs in a separate PHP process, so `exit()`/`die()` calls in the script do not affect the test run. `getSkipReason()` returns the reason string with the leading `skip` token stripped (e.g. `"requires PHP 8.2+"`) or `null` if the test should run.
 
+### Checking many files at once
+
+`getSkipReason()` spawns one PHP process per call, so calling it in a loop over hundreds of `.phpt` files pays that
+startup cost serially. `getSkipReasons()` evaluates a list of files instead, running up to `$concurrency` SKIPIF
+scripts at a time (default: one per CPU core):
+
+```php
+use AliesDev\PsalmTester\PsalmTest;
+
+$reasons = PsalmTest::getSkipReasons($phptFiles); // array<string, ?string>, keyed by file path, same order as $phptFiles
+
+foreach ($phptFiles as $phptFile) {
+    if ($reasons[$phptFile] !== null) {
+        // markTestSkipped($reasons[$phptFile]);
+    }
+}
+```
+
+Pass an explicit `concurrency` to bound how many scripts run in parallel: `getSkipReasons($phptFiles, concurrency: 4)`.
+
 ## Batch execution
 
 By default, `test()` spawns a separate Psalm process per `.phpt` file.
