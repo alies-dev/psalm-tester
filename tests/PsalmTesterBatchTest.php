@@ -19,6 +19,181 @@ final class PsalmTesterBatchTest extends TestCase
         \putenv('STUB_SLEEP');
         \putenv('STUB_MODE');
         \putenv('STUB_ENV_LOG_DIR');
+        \putenv('STUB_PID_DIR');
+        \putenv('STUB_POPULATE_CACHE');
+
+        foreach ($this->scratchDirs as $dir) {
+            self::removeTree($dir);
+        }
+        $this->scratchDirs = [];
+    }
+
+    /** @var list<string> */
+    private array $scratchDirs = [];
+
+    public function testRunBatchFailsFastOnInvalidOutputAndKillsTheStillRunningSibling(): void
+    {
+        $temporaryDirectory = $this->makeScratchDir();
+        $pidDir = $this->makeScratchDir();
+        \putenv('STUB_PID_DIR=' . $pidDir);
+        $tester = PsalmTester::create(psalmPath: self::STUB_PATH, temporaryDirectory: $temporaryDirectory, showProgress: false);
+
+        $start = \microtime(true);
+
+        try {
+            $tester->runBatch([
+                'slow' => new PsalmTest(code: '<?php', constraint: new IsIdentical(''), arguments: '--stub-sleep=30'),
+                // Waits until both stubs are running, so the sibling is live when this one fails.
+                'bad' => new PsalmTest(code: '<?php', constraint: new IsIdentical(''), arguments: '--stub-mode=invalid_json --stub-await-pids=2'),
+            ]);
+            self::fail('Expected invalid JSON to throw.');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('Failed to decode Psalm JSON output', $e->getMessage());
+        }
+
+        self::assertLessThan(10.0, \microtime(true) - $start, 'The failure must not wait for the 30s sibling.');
+        $pids = \array_map(\basename(...), \glob($pidDir . '/*') ?: []);
+        self::assertCount(2, $pids);
+        foreach ($pids as $pid) {
+            self::assertFalse(self::isAlive((int) $pid), \sprintf('Stub pid %s survived.', $pid));
+        }
+        self::assertSame([], \glob($temporaryDirectory . '/*'), 'Code files, stdout files and cache dirs must be removed.');
+    }
+
+    public function testRunBatchRemovesNestedCacheContents(): void
+    {
+        $temporaryDirectory = $this->makeScratchDir();
+        \putenv('STUB_POPULATE_CACHE=1');
+        $tester = PsalmTester::create(psalmPath: self::STUB_PATH, temporaryDirectory: $temporaryDirectory, showProgress: false);
+
+        $tester->runBatch([
+            'a' => new PsalmTest(code: '<?php', constraint: new IsIdentical('')),
+            'b' => new PsalmTest(code: '<?php', constraint: new IsIdentical(''), arguments: '--config=b'),
+        ]);
+
+        self::assertSame([], \glob($temporaryDirectory . '/*'));
+    }
+
+    public function testRunBatchHonorsConcurrency(): void
+    {
+        $tester = PsalmTester::create(psalmPath: self::STUB_PATH, defaultArguments: '', showProgress: false, concurrency: 1);
+        \putenv('STUB_SLEEP=0.4');
+
+        $start = \microtime(true);
+        $tester->runBatch([
+            'a' => new PsalmTest(code: '<?php', constraint: new IsIdentical(''), arguments: '--config=a'),
+            'b' => new PsalmTest(code: '<?php', constraint: new IsIdentical(''), arguments: '--config=b'),
+            'c' => new PsalmTest(code: '<?php', constraint: new IsIdentical(''), arguments: '--config=c'),
+        ]);
+
+        self::assertGreaterThanOrEqual(1.2, \microtime(true) - $start, 'Three 0.4s groups must run one at a time.');
+    }
+
+    public function testConcurrentGroupsWritingLargeStdoutAndStderrComplete(): void
+    {
+        $scratch = $this->makeScratchDir();
+        $script = <<<'PHP'
+            require $argv[1];
+            $tester = AliesDev\PsalmTester\PsalmTester::create(psalmPath: $argv[2], defaultArguments: '', showProgress: false);
+            $tests = [];
+            foreach (['a', 'b', 'c'] as $id) {
+                $tests[$id] = new AliesDev\PsalmTester\PsalmTest(code: '<?php', constraint: new PHPUnit\Framework\Constraint\IsIdentical(''), arguments: '--config=' . $id);
+            }
+            foreach ($tester->runBatch($tests) as $id => $output) {
+                echo $id, '=', substr_count($output, "\n") + 1, "\n";
+            }
+            PHP;
+        $env = \getenv();
+        $env['STUB_MODE'] = 'large';
+        $env['STUB_STDERR_BYTES'] = (string) (1 << 20);
+        $process = \proc_open(
+            [\PHP_BINARY, '-r', $script, \dirname(__DIR__) . '/vendor/autoload.php', self::STUB_PATH],
+            [1 => ['file', $scratch . '/stdout', 'w'], 2 => ['file', $scratch . '/stderr', 'w']],
+            $pipes,
+            null,
+            $env,
+        );
+        self::assertIsResource($process);
+
+        // An external deadline, so a pipe deadlock fails this test instead of hanging the suite.
+        $deadline = \microtime(true) + 30;
+        while (\proc_get_status($process)['running'] && \microtime(true) < $deadline) {
+            \usleep(20_000);
+        }
+        $timedOut = \proc_get_status($process)['running'];
+        if ($timedOut) {
+            \proc_terminate($process, 9);
+        }
+        \proc_close($process);
+
+        self::assertFalse($timedOut, 'runBatch did not finish within 30s.');
+        self::assertSame("a=3000\nb=3000\nc=3000\n", \file_get_contents($scratch . '/stdout'));
+        self::assertSame(3 << 20, \filesize($scratch . '/stderr'));
+    }
+
+    public function testRunBatchRoutesEachFilesErrorsToItsOwnId(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_MODE=echo_code');
+
+        // Interleaved across two argument groups, so group order differs from input order.
+        $results = $tester->runBatch([
+            'a' => new PsalmTest(code: '<?php // alpha', constraint: new IsIdentical('')),
+            'b' => new PsalmTest(code: '<?php // beta', constraint: new IsIdentical(''), arguments: '--config=other'),
+            'c' => new PsalmTest(code: '<?php // gamma', constraint: new IsIdentical('')),
+            'd' => new PsalmTest(code: '<?php // delta', constraint: new IsIdentical(''), arguments: '--config=other'),
+        ]);
+
+        self::assertSame([
+            'a' => 'StubError on line 1: // alpha',
+            'b' => 'StubError on line 1: // beta',
+            'c' => 'StubError on line 1: // gamma',
+            'd' => 'StubError on line 1: // delta',
+        ], $results);
+    }
+
+    public function testRunBatchShiftsReportedLinesByCodeFirstLine(): void
+    {
+        $tester = self::createTester();
+        \putenv('STUB_MODE=echo_code');
+
+        $results = $tester->runBatch([
+            'shifted' => new PsalmTest(code: '<?php // shifted', constraint: new IsIdentical(''), codeFirstLine: 7),
+            'plain' => new PsalmTest(code: '<?php // plain', constraint: new IsIdentical('')),
+        ]);
+
+        self::assertSame(['shifted' => 'StubError on line 7: // shifted', 'plain' => 'StubError on line 1: // plain'], $results);
+    }
+
+    public function testRunBatchAndTestPassPsalmStderrThrough(): void
+    {
+        $script = <<<'PHP'
+            require $argv[1];
+            $tester = AliesDev\PsalmTester\PsalmTester::create(psalmPath: $argv[2], showProgress: false);
+            $test = new AliesDev\PsalmTester\PsalmTest(
+                code: '<?php',
+                constraint: new PHPUnit\Framework\Constraint\StringMatchesFormatDescription('%A'),
+            );
+            $tester->runBatch(['x' => $test]);
+            $tester->test($test);
+            PHP;
+        $env = \getenv();
+        $env['STUB_STDERR'] = '[stub-stderr-marker]';
+        $pipes = [];
+        $process = \proc_open(
+            [\PHP_BINARY, '-r', $script, \dirname(__DIR__) . '/vendor/autoload.php', self::STUB_PATH],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            $env,
+        );
+        self::assertIsResource($process);
+        \fclose($pipes[1]);
+        $stderr = (string) \stream_get_contents($pipes[2]);
+        \fclose($pipes[2]);
+
+        self::assertSame(0, \proc_close($process), $stderr);
+        self::assertSame(2, \substr_count($stderr, '[stub-stderr-marker]'), $stderr);
     }
 
     public function testRunBatchPreservesInputOrderAndDistributesErrorsAcrossGroups(): void
@@ -164,18 +339,22 @@ final class PsalmTesterBatchTest extends TestCase
             $tester->runBatch([
                 'a' => new PsalmTest(code: '<?php // a', constraint: new IsIdentical(''), arguments: '--config=a'),
                 'b' => new PsalmTest(code: '<?php // b', constraint: new IsIdentical(''), arguments: '--config=b'),
-                'c' => new PsalmTest(code: '<?php // c', constraint: new IsIdentical(''), arguments: '--config=c'),
+                'c' => new PsalmTest(code: '<?php // c', constraint: new IsIdentical(''), arguments: '--config=c --no-cache'),
             ]);
 
-            /** @var list<array{XDG_CACHE_HOME: string, TMPDIR: string, TMP: string, TEMP: string, sys_get_temp_dir: string}> $records */
+            /** @var list<array{XDG_CACHE_HOME: string, TMPDIR: string, TMP: string, TEMP: string, sys_get_temp_dir: string, argv: list<string>}> $records */
             $records = [];
             foreach (\glob($logDir . '/*.json') ?: [] as $file) {
-                /** @var array{XDG_CACHE_HOME: string, TMPDIR: string, TMP: string, TEMP: string, sys_get_temp_dir: string} $decoded */
+                /** @var array{XDG_CACHE_HOME: string, TMPDIR: string, TMP: string, TEMP: string, sys_get_temp_dir: string, argv: list<string>} $decoded */
                 $decoded = \json_decode((string) \file_get_contents($file), true, flags: \JSON_THROW_ON_ERROR);
                 $records[] = $decoded;
             }
 
             self::assertCount(3, $records, 'Each group should invoke the stub exactly once.');
+
+            foreach ($records as $record) {
+                self::assertSame(1, \count(\array_keys($record['argv'], '--no-cache', true)), 'Each group runs with exactly one --no-cache.');
+            }
 
             $xdg = \array_column($records, 'XDG_CACHE_HOME');
             $tmpdir = \array_column($records, 'TMPDIR');
@@ -230,6 +409,29 @@ final class PsalmTesterBatchTest extends TestCase
             self::assertSame([], \glob($tempDir . '/*'));
             @\rmdir($tempDir);
         }
+    }
+
+    private function makeScratchDir(): string
+    {
+        $dir = \sys_get_temp_dir() . '/psalm_tester_batch_' . \bin2hex(\random_bytes(4));
+        self::assertTrue(\mkdir($dir, 0777, true));
+        $this->scratchDirs[] = $dir;
+
+        return $dir;
+    }
+
+    private static function removeTree(string $dir): void
+    {
+        foreach (\glob($dir . '/*') ?: [] as $entry) {
+            \is_dir($entry) ? self::removeTree($entry) : @\unlink($entry);
+        }
+        @\rmdir($dir);
+    }
+
+    private static function isAlive(int $pid): bool
+    {
+        /** @psalm-suppress ForbiddenCode */
+        return \trim((string) \shell_exec('ps -p ' . $pid . ' -o pid= 2>/dev/null')) !== '';
     }
 
     /**

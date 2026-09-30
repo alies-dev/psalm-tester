@@ -3,24 +3,54 @@
 
 declare(strict_types=1);
 
-// Stub "psalm" executable used by PsalmTesterBatchTest. Reads STUB_SLEEP / STUB_MODE
-// from the environment; emits JSON on stdout. Files are the argv entries that exist on disk.
-//
-// STUB_SLEEP is process-wide env, so it sleeps every concurrently-run group identically.
-// A --stub-sleep=<seconds> CLI arg overrides it per invocation, letting a single PsalmTest's
-// `arguments` string make just its own group slow (e.g. to test per-group timeouts).
+// Stub "psalm" executable used by the PsalmTester tests; emits JSON on stdout for the argv
+// entries that exist on disk. Behavior comes from the environment (STUB_*), which is shared by
+// every group of a batch, or per invocation from --stub-* arguments in a group's argument string:
+//   --stub-sleep=<seconds>    overrides STUB_SLEEP
+//   --stub-mode=<mode>        overrides STUB_MODE
+//   --stub-await-pids=<n>     first wait until STUB_PID_DIR holds <n> pid files
+// STUB_PID_DIR: each invocation writes its pid there. STUB_STDERR: text written to stderr.
+// STUB_STDERR_BYTES: that many bytes written to stderr. STUB_POPULATE_CACHE: nested files
+// written under XDG_CACHE_HOME, as a real cache would be.
 
-$sleep = (float) (\getenv('STUB_SLEEP') ?: '0');
+$options = [];
 foreach ($argv as $arg) {
-    if (\is_string($arg) && \str_starts_with($arg, '--stub-sleep=')) {
-        $sleep = (float) \substr($arg, \strlen('--stub-sleep='));
+    if (\is_string($arg) && \preg_match('/^--stub-([a-z-]+)=(.*)$/', $arg, $m) === 1) {
+        $options[$m[1]] = $m[2];
     }
 }
+
+$pidDir = (string) \getenv('STUB_PID_DIR');
+if ($pidDir !== '') {
+    \file_put_contents($pidDir . '/' . \getmypid(), '');
+    $awaitPids = (int) ($options['await-pids'] ?? 0);
+    while (\count(\glob($pidDir . '/*') ?: []) < $awaitPids) {
+        \usleep(10_000);
+    }
+}
+
+if (\getenv('STUB_POPULATE_CACHE') !== false) {
+    $nested = (string) \getenv('XDG_CACHE_HOME') . '/psalm/nested/deeper';
+    @\mkdir($nested, 0777, true);
+    \file_put_contents($nested . '/entry.cache', 'cached');
+}
+
+$sleep = (float) ($options['sleep'] ?? (\getenv('STUB_SLEEP') ?: '0'));
 if ($sleep > 0) {
     \usleep((int) ($sleep * 1_000_000));
 }
 
-$mode = (string) (\getenv('STUB_MODE') ?: 'per_file');
+$stderrBytes = (int) \getenv('STUB_STDERR_BYTES');
+if ($stderrBytes > 0) {
+    \fwrite(\STDERR, \str_repeat('e', $stderrBytes));
+}
+
+$stderr = (string) \getenv('STUB_STDERR');
+if ($stderr !== '') {
+    \fwrite(\STDERR, $stderr);
+}
+
+$mode = (string) ($options['mode'] ?? (\getenv('STUB_MODE') ?: 'per_file'));
 
 if ($mode === 'invalid_json') {
     \fwrite(\STDOUT, 'NOT JSON');
@@ -57,6 +87,7 @@ if ($mode === 'env_record') {
             'TMP' => (string) \getenv('TMP'),
             'TEMP' => (string) \getenv('TEMP'),
             'sys_get_temp_dir' => \sys_get_temp_dir(),
+            'argv' => \array_slice($argv, 1),
         ];
         \file_put_contents(
             $logDir . '/' . \getmypid() . '_' . \bin2hex(\random_bytes(4)) . '.json',
@@ -87,6 +118,17 @@ if ($mode === 'large') {
                 'file_path' => $file,
             ];
         }
+    }
+} elseif ($mode === 'echo_code') {
+    // The message is the file's own code minus the open tag, so each id's output is distinct.
+    foreach ($files as $file) {
+        $errors[] = [
+            'type' => 'StubError',
+            'line_from' => 1,
+            'column_from' => 1,
+            'message' => \trim(\str_replace('<?php', '', (string) \file_get_contents($file))),
+            'file_path' => $file,
+        ];
     }
 } else {
     foreach ($files as $file) {

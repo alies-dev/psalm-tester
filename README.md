@@ -218,7 +218,14 @@ final class MyPsalmTest extends TestCase
 > Ensure that class and function names are unique across `.phpt` files within the same argument group,
 > otherwise Psalm will report `DuplicateClass` / `DuplicateFunction` errors.
 
-See the source code in `PsalmTester::runBatch()` and related helper methods for implementation details. Groups run concurrently via `proc_open()`, so total wall time is bounded by the slowest group rather than the sum of all groups.
+See the source code in `PsalmTester::runBatch()` and related helper methods for implementation details. Groups run
+concurrently, up to one per CPU core by default (`PsalmTester::create(concurrency: 4)` changes that); the rest wait for a
+free slot. If one group fails (e.g. Psalm prints invalid JSON), the exception surfaces immediately and still-running
+groups are killed.
+
+Each group runs with its own empty cache directory (`XDG_CACHE_HOME`, `TMPDIR`, `TMP` and `TEMP` point at it) and with
+`--no-cache` appended unless its arguments already contain it: the cache would be thrown away after the run, and
+writing it roughly doubled the wall time of a 700 file suite.
 
 ### Bounding how long a group can run
 
@@ -230,6 +237,7 @@ use AliesDev\PsalmTester\PsalmTester;
 PsalmTester::create(timeoutSeconds: 30.0);
 ```
 
-If a group is still running after `timeoutSeconds`, it is terminated and every test in that group gets a failure
-output naming the group's arguments and the timeout instead of Psalm's output; other groups are unaffected and keep
-running to completion. The default is `null`, meaning no timeout.
+If a group is still running `timeoutSeconds` after it started (time spent queued for a free slot does not count), it is
+terminated with its whole process tree and every test in that group gets a failure output naming the group's arguments
+and the timeout instead of Psalm's output; other groups are unaffected and keep running to completion. The default is
+`null`, meaning no timeout.
