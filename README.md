@@ -249,8 +249,9 @@ update mode prints nothing, so it works under PHPUnit's `--process-isolation`.
 ### 0.4.0
 
 * **Faster suites.** `--SKIPIF--` scripts run concurrently; Psalm runs go through a bounded process runner (no pipes,
-  no shell, one run per argument set, `withConcurrency()`); each run gets `--no-cache` and its own cache directory,
-  which roughly halved a 700 file suite.
+  no shell, one run per argument set, `withConcurrency()`); each run gets `--no-cache` and its own cache directory.
+  psalm-plugin-laravel's type suite (758 phpt files) went from 28.6s to about 10s wall time with `PsalmPhptTestCase`,
+  and about 4.6s with `--filter` on one test.
 * **`PsalmPhptTestCase`**: implement `phptDirectory()` and get discovery, SKIPIF, one batched run and PHPUnit
   `--filter` narrowing (only the selected files are analyzed).
 * **New API**: `Phpt`, `Expectation`, `PsalmTester::create()` with `with*()` methods, `run()` / `runOne()` returning
