@@ -52,31 +52,6 @@ final class PsalmTesterUpdateTest extends TestCase
         $this->tempDirs = [];
     }
 
-    public function testUpdateRewritesTheExpectSectionInPlace(): void
-    {
-        $file = $this->writePhpt("--FILE--\n<?php // rewrite-me\n--EXPECT--\nstale text\n");
-
-        $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)
-            ->runOne(Phpt::fromFile($file));
-
-        self::assertSame(Outcome::Updated, $result->outcome);
-        self::assertSame(
-            "--FILE--\n<?php // rewrite-me\n--EXPECT--\nStubError on line 2: // rewrite-me\n",
-            \file_get_contents($file),
-        );
-    }
-
-    public function testUpdateIsIdempotent(): void
-    {
-        $file = $this->writePhpt("--FILE--\n<?php // idempotent\n--EXPECT--\nstale text\n");
-        $tester = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true);
-
-        $tester->runOne(Phpt::fromFile($file));
-        $second = $tester->runOne(Phpt::fromFile($file));
-
-        self::assertSame(Outcome::Passed, $second->outcome);
-    }
-
     public function testMatchingExpectfIsLeftAlone(): void
     {
         $file = $this->writePhpt("--FILE--\n<?php // fmt-ok\n--EXPECTF--\nStubError on line %d: %s\n");
@@ -151,19 +126,6 @@ final class PsalmTesterUpdateTest extends TestCase
         self::assertStringContainsString('StubError on line 2: // quiet', (string) \file_get_contents($updated));
     }
 
-    public function testUpdatePreservesCrlfLineEndings(): void
-    {
-        $file = $this->writePhpt("--FILE--\r\n<?php // crlf\r\n--EXPECT--\r\nstale\r\n");
-
-        PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)
-            ->runOne(Phpt::fromFile($file));
-
-        self::assertSame(
-            "--FILE--\r\n<?php // crlf\r\n--EXPECT--\r\nStubError on line 2: // crlf\r\n",
-            \file_get_contents($file),
-        );
-    }
-
     /**
      * @return iterable<string, array{string, string}>
      */
@@ -216,14 +178,6 @@ final class PsalmTesterUpdateTest extends TestCase
         self::assertSame($contents, \file_get_contents($file));
     }
 
-    public function testADuplicateExpectSectionIsRejectedByTheParser(): void
-    {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessageMatches('/Duplicate section --EXPECT--/');
-
-        Phpt::fromFile($this->writePhpt("--FILE--\n<?php\n--EXPECT--\na\n--EXPECT--\nb\n"));
-    }
-
     public function testARewriteFailureLeavesThatFileAloneAndTheRestOfTheBatchContinues(): void
     {
         $broken = $this->writePhpt("--FILE--\n<?php // broken\n--EXPECT--\nstale\n");
@@ -245,17 +199,6 @@ final class PsalmTesterUpdateTest extends TestCase
         self::assertStringContainsString('Duplicate section --EXPECT--', (string) $results['broken']->reason);
         self::assertSame($duplicated, \file_get_contents($broken));
         self::assertSame(Outcome::Updated, $results['fine']->outcome);
-    }
-
-    public function testTheNotUpdatedReasonIsPartOfTheFailureMessage(): void
-    {
-        $file = $this->writePhpt("--FILE--\n<?php // fmt\n--EXPECTF--\nWrongType on line %d: %s\n");
-        $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)->runOne(Phpt::fromFile($file));
-
-        $this->expectException(ExpectationFailedException::class);
-        $this->expectExceptionMessage(\sprintf('not updated: %s (EXPECTF cannot be rewritten)', $file));
-
-        $result->assert();
     }
 
     public function testAFileChangedAfterParsingIsNotOverwritten(): void

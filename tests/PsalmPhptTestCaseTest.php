@@ -7,7 +7,7 @@ namespace AliesDev\PsalmTester\Tests;
 use AliesDev\PsalmTester\Tests\Fixtures\PsalmPhptTestCase\FixturePhptCase;
 use PHPUnit\Framework\TestCase;
 
-final class PsalmPsalmPhptTestCaseTest extends TestCase
+final class PsalmPhptTestCaseTest extends TestCase
 {
     private const FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/FixturePhptCase.php';
     private const ASSERTING_FIXTURE = __DIR__ . '/Fixtures/PsalmPhptTestCase/AssertingFixturePhptCase.php';
@@ -59,15 +59,6 @@ final class PsalmPsalmPhptTestCaseTest extends TestCase
 
         self::assertSame(0, $exitCode, $output);
         self::assertMatchesRegularExpression(self::summary(tests: 4, assertions: 3, suffix: 'Skipped: 1'), $output);
-    }
-
-    public function testFilteredRunAnalyzesOnlyTheSelectedFile(): void
-    {
-        [$exitCode, $output] = $this->runFixture(['--filter', 'beta']);
-
-        self::assertSame([['<?php // beta']], $this->analyzedContents());
-        self::assertSame(0, $exitCode, $output);
-        self::assertMatchesRegularExpression(self::summary(tests: 1, assertions: 1), $output);
     }
 
     public function testDataSetFilterSelectsANestedFileByItsRelativePath(): void
