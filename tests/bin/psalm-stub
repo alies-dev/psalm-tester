@@ -5,8 +5,17 @@ declare(strict_types=1);
 
 // Stub "psalm" executable used by PsalmTesterBatchTest. Reads STUB_SLEEP / STUB_MODE
 // from the environment; emits JSON on stdout. Files are the argv entries that exist on disk.
+//
+// STUB_SLEEP is process-wide env, so it sleeps every concurrently-run group identically.
+// A --stub-sleep=<seconds> CLI arg overrides it per invocation, letting a single PsalmTest's
+// `arguments` string make just its own group slow (e.g. to test per-group timeouts).
 
 $sleep = (float) (\getenv('STUB_SLEEP') ?: '0');
+foreach ($argv as $arg) {
+    if (\is_string($arg) && \str_starts_with($arg, '--stub-sleep=')) {
+        $sleep = (float) \substr($arg, \strlen('--stub-sleep='));
+    }
+}
 if ($sleep > 0) {
     \usleep((int) ($sleep * 1_000_000));
 }

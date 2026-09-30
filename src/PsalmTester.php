@@ -9,6 +9,9 @@ use PHPUnit\Framework\Assert;
 
 /**
  * @api
+ * @psalm-type GroupEntries = array<array-key, array{file: string, test: PsalmTest}>
+ * @psalm-type StartedGroup = array{args: string, entries: GroupEntries, command: string, cacheDir: string, process: resource, stdout: resource, stderr: resource, stdoutBuffer: string, startedAt: float}
+ * @psalm-type RunningGroup = array{args: string, entries: GroupEntries, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string, startedAt: float}
  */
 final readonly class PsalmTester
 {
@@ -20,6 +23,7 @@ final readonly class PsalmTester
         private string $defaultArguments,
         private string $temporaryDirectory,
         private bool $showProgress,
+        private ?float $timeoutSeconds,
     ) {}
 
     public static function create(
@@ -27,12 +31,14 @@ final readonly class PsalmTester
         string $defaultArguments = '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
         ?string $temporaryDirectory = null,
         bool $showProgress = true,
+        ?float $timeoutSeconds = null,
     ): self {
         return new self(
             psalmPath: $psalmPath ?? self::findPsalm(),
             defaultArguments: $defaultArguments,
             temporaryDirectory: self::resolveTemporaryDirectory($temporaryDirectory),
             showProgress: $showProgress,
+            timeoutSeconds: $timeoutSeconds,
         );
     }
 
@@ -95,7 +101,7 @@ final readonly class PsalmTester
                 $results[$id] = '';
             }
 
-            /** @var array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> */
+            /** @var array<int, RunningGroup> */
             $running = [];
             /** @var list<string> */
             $allCacheDirs = [];
@@ -135,7 +141,7 @@ final readonly class PsalmTester
 
     /**
      * @param array<array-key, array{file: string, test: PsalmTest}> $entries
-     * @return array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: resource, stderr: resource, stdoutBuffer: string}
+     * @return StartedGroup
      */
     private function startGroup(string $args, array $entries): array
     {
@@ -184,6 +190,7 @@ final readonly class PsalmTester
             'stdout' => $pipes[1],
             'stderr' => $pipes[2],
             'stdoutBuffer' => '',
+            'startedAt' => \microtime(true),
         ];
     }
 
@@ -242,7 +249,7 @@ final readonly class PsalmTester
     }
 
     /**
-     * @param array<int, array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string}> $running
+     * @param array<int, RunningGroup> $running
      * @param array<array-key, string> $results
      * @param-out array<array-key, string> $results
      */
@@ -250,6 +257,14 @@ final readonly class PsalmTester
     {
         // Progress lines are printed in completion order (non-deterministic across parallel groups).
         while ($running !== []) {
+            if ($this->timeoutSeconds !== null) {
+                $this->finalizeTimedOutGroups($running, $results, $this->timeoutSeconds);
+
+                if ($running === []) {
+                    break;
+                }
+            }
+
             $readable = [];
             foreach ($running as $proc) {
                 if ($proc['stdout'] !== null) {
@@ -307,7 +322,53 @@ final readonly class PsalmTester
     }
 
     /**
-     * @param array{args: string, entries: array<array-key, array{file: string, test: PsalmTest}>, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string} $proc
+     * Terminates and finalizes any group that has been running longer than $timeoutSeconds,
+     * writing a failure output naming its args and the timeout to every test in that group.
+     * Groups still within budget are left untouched, so other groups run to completion normally.
+     *
+     * @param array<int, RunningGroup> $running
+     * @param array<array-key, string> $results
+     * @param-out array<array-key, string> $results
+     */
+    private function finalizeTimedOutGroups(array &$running, array &$results, float $timeoutSeconds): void
+    {
+        $now = \microtime(true);
+
+        foreach (array_keys($running) as $key) {
+            $proc = $running[$key];
+
+            if ($now - $proc['startedAt'] < $timeoutSeconds) {
+                continue;
+            }
+
+            // Signal 9 = SIGKILL, passed as a literal so this doesn't need ext-pcntl for the
+            // constant. Only the single tracked process is targeted: we never call setsid() for
+            // the child, so it shares our own process group and killing that group would take
+            // this process down with it. True process-tree isolation is left as a documented gap.
+            @\proc_terminate($proc['process'], 9);
+
+            if ($proc['stdout'] !== null) {
+                @\fclose($proc['stdout']);
+            }
+            if ($proc['stderr'] !== null) {
+                @\fclose($proc['stderr']);
+            }
+            @\proc_close($proc['process']);
+            unset($running[$key]);
+
+            $message = \sprintf(
+                'PsalmTimeout: group [%s] did not finish within %.1fs and was terminated.',
+                $proc['args'],
+                $timeoutSeconds,
+            );
+            foreach (array_keys($proc['entries']) as $id) {
+                $results[$id] = $message;
+            }
+        }
+    }
+
+    /**
+     * @param RunningGroup $proc
      * @param array<array-key, string> $results
      * @param-out array<array-key, string> $results
      */

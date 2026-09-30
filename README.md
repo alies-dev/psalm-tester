@@ -204,3 +204,17 @@ final class MyPsalmTest extends TestCase
 > otherwise Psalm will report `DuplicateClass` / `DuplicateFunction` errors.
 
 See the source code in `PsalmTester::runBatch()` and related helper methods for implementation details. Groups run concurrently via `proc_open()`, so total wall time is bounded by the slowest group rather than the sum of all groups.
+
+### Bounding how long a group can run
+
+Pass `timeoutSeconds` to `PsalmTester::create()` to cap how long any single group of `runBatch()` is allowed to run:
+
+```php
+use AliesDev\PsalmTester\PsalmTester;
+
+PsalmTester::create(timeoutSeconds: 30.0);
+```
+
+If a group is still running after `timeoutSeconds`, it is terminated and every test in that group gets a failure
+output naming the group's arguments and the timeout instead of Psalm's output; other groups are unaffected and keep
+running to completion. The default is `null`, meaning no timeout.
