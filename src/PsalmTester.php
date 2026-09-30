@@ -9,13 +9,11 @@ use PHPUnit\Framework\Assert;
 
 /**
  * @api
- * @psalm-type GroupEntries = array<array-key, array{file: string, test: PsalmTest}>
- * @psalm-type StartedGroup = array{args: string, entries: GroupEntries, command: string, cacheDir: string, process: resource, stdout: resource, stderr: resource, stdoutBuffer: string, startedAt: float}
- * @psalm-type RunningGroup = array{args: string, entries: GroupEntries, command: string, cacheDir: string, process: resource, stdout: ?resource, stderr: ?resource, stdoutBuffer: string, startedAt: float}
  */
 final readonly class PsalmTester
 {
     /**
+     * @param positive-int $concurrency
      * @psalm-mutation-free
      */
     private function __construct(
@@ -23,6 +21,7 @@ final readonly class PsalmTester
         private string $defaultArguments,
         private string $temporaryDirectory,
         private bool $showProgress,
+        private int $concurrency,
         private ?float $timeoutSeconds,
     ) {}
 
@@ -31,13 +30,21 @@ final readonly class PsalmTester
         string $defaultArguments = '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
         ?string $temporaryDirectory = null,
         bool $showProgress = true,
+        ?int $concurrency = null,
         ?float $timeoutSeconds = null,
     ): self {
+        $concurrency ??= ProcessRunner::cpuCount();
+
+        if ($concurrency < 1) {
+            throw new \InvalidArgumentException('$concurrency must be at least 1.');
+        }
+
         return new self(
             psalmPath: $psalmPath ?? self::findPsalm(),
             defaultArguments: $defaultArguments,
             temporaryDirectory: self::resolveTemporaryDirectory($temporaryDirectory),
             showProgress: $showProgress,
+            concurrency: $concurrency,
             timeoutSeconds: $timeoutSeconds,
         );
     }
@@ -70,7 +77,7 @@ final readonly class PsalmTester
 
     /**
      * Run multiple tests in batched Psalm invocations (one per unique argument set).
-     * Groups are launched concurrently via proc_open; wall time is bounded by the slowest group.
+     * Up to $concurrency groups (default: one per CPU core) run at a time; the rest are queued.
      * Returns formatted output per test — callers are responsible for assertions.
      * @api
      * @param array<array-key, PsalmTest> $tests keyed by identifier
@@ -81,117 +88,101 @@ final readonly class PsalmTester
         /** @var array<string, array<array-key, array{file: string, test: PsalmTest}>> */
         $groups = [];
         /** @var list<string> */
-        $allTempFiles = [];
+        $tempFiles = [];
+        /** @var list<string> */
+        $cacheDirs = [];
 
         try {
-            foreach ($tests as $id => $test) {
-                $args = (string) \preg_replace('/\s+/', ' ', \trim($test->arguments ?: $this->defaultArguments));
-                $file = $this->createTemporaryCodeFile($test->code);
-                $allTempFiles[] = $file;
-                $groups[$args][$id] = [
-                    'file' => $file,
-                    'test' => $test,
-                ];
-            }
-
             // Pre-seed results keyed by input id so the returned dict preserves $tests input order.
             /** @var array<array-key, string> */
             $results = [];
-            foreach ($tests as $id => $_) {
+
+            foreach ($tests as $id => $test) {
                 $results[$id] = '';
+                $args = self::normalizeArgs($test->arguments ?: $this->defaultArguments);
+                $file = $this->createTemporaryCodeFile($test->code);
+                $tempFiles[] = $file;
+                $groups[$args][$id] = ['file' => $file, 'test' => $test];
             }
 
-            /** @var array<int, RunningGroup> */
-            $running = [];
-            /** @var list<string> */
-            $allCacheDirs = [];
+            /** @var array<string, array{command: string, env: array<string, string>}> */
+            $jobs = [];
 
-            try {
-                foreach ($groups as $args => $entries) {
-                    $proc = $this->startGroup($args, $entries);
-                    $allCacheDirs[] = $proc['cacheDir'];
-                    $running[] = $proc;
-                }
-
-                $this->drainAndFinalize($running, $results);
-
-                return $results;
-            } finally {
-                foreach ($running as $proc) {
-                    if ($proc['stdout'] !== null) {
-                        @\fclose($proc['stdout']);
-                    }
-                    if ($proc['stderr'] !== null) {
-                        @\fclose($proc['stderr']);
-                    }
-                    @\proc_close($proc['process']);
-                }
-                foreach ($allCacheDirs as $dir) {
-                    self::removeDirectoryRecursive($dir);
-                }
+            foreach ($groups as $args => $entries) {
+                // Point Psalm and any plugins at a per-group scratch dir so concurrent groups
+                // don't race on a shared cache location. XDG_CACHE_HOME is what Psalm itself
+                // reads; TMPDIR/TMP/TEMP cover plugins that derive their cache from
+                // sys_get_temp_dir() (e.g. psalm-plugin-laravel's Plugin::getCacheLocation()).
+                $cacheDir = $this->createGroupCacheDir();
+                $cacheDirs[] = $cacheDir;
+                $jobs[$args] = ['command' => $this->buildCommand($args, $entries), 'env' => self::buildChildEnv($cacheDir)];
             }
+
+            ProcessRunner::run(
+                $jobs,
+                $this->concurrency,
+                $this->temporaryDirectory,
+                function (string $args, ?string $output) use ($groups, &$results): void {
+                    if ($output === null) {
+                        $message = \sprintf(
+                            'PsalmTimeout: group [%s] did not finish within %.1fs and was terminated.',
+                            $args,
+                            (float) $this->timeoutSeconds,
+                        );
+                        foreach (\array_keys($groups[$args]) as $id) {
+                            $results[$id] = $message;
+                        }
+
+                        return;
+                    }
+
+                    $this->collectGroupResults($args, $groups[$args], $output, $results);
+                },
+                $this->timeoutSeconds,
+            );
+
+            return $results;
         } finally {
-            foreach ($allTempFiles as $file) {
-                if (is_file($file)) {
-                    @unlink($file);
-                }
+            foreach ($tempFiles as $file) {
+                @\unlink($file);
+            }
+            foreach ($cacheDirs as $dir) {
+                self::removeDirectoryRecursive($dir);
             }
         }
     }
 
     /**
-     * @param array<array-key, array{file: string, test: PsalmTest}> $entries
-     * @return StartedGroup
+     * @psalm-pure
      */
-    private function startGroup(string $args, array $entries): array
+    private static function normalizeArgs(string $args): string
     {
-        $filePaths = array_map(
-            static fn(array $entry): string => $entry['file'],
-            $entries,
-        );
+        // Collapses newlines from --ARGS-- sections, which a shell would treat as command separators.
+        return (string) \preg_replace('/\s+/', ' ', \trim($args));
+    }
 
-        $command = \sprintf(
-            '%s --output-format=json %s %s',
-            \escapeshellarg($this->psalmPath),
-            $args,
-            \implode(' ', array_map(\escapeshellarg(...), array_values($filePaths))),
-        );
-
-        // Point Psalm and any plugins at a per-group scratch dir so concurrent groups
-        // don't race on a shared cache location. XDG_CACHE_HOME is what Psalm itself
-        // reads; TMPDIR/TMP/TEMP cover plugins that derive their cache from
-        // sys_get_temp_dir() (e.g. psalm-plugin-laravel's Plugin::getCacheLocation()).
-        $cacheDir = $this->createGroupCacheDir();
-        $env = self::buildChildEnv($cacheDir);
-
-        $descriptors = [
-            0 => ['pipe', 'r'],
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ];
-        $pipes = [];
-        $process = \proc_open($command, $descriptors, $pipes, null, $env);
-
-        if (!\is_resource($process)) {
-            self::removeDirectoryRecursive($cacheDir);
-            throw new \RuntimeException(\sprintf('Failed to run command %s.', $command));
+    /**
+     * @param string $args Pre-built argument string, trusted input from $this->defaultArguments or
+     *     PsalmTest::$arguments (parsed from .phpt files). Not escaped: it holds several arguments.
+     * @param array<array-key, array{file: string, test: PsalmTest}> $entries
+     */
+    private function buildCommand(string $args, array $entries): string
+    {
+        // The per-group cache dir starts empty and is deleted afterwards, so writing a cache only
+        // costs time (2x on a 700-file suite); --no-cache also keeps an explicitly configured
+        // cacheDirectory, which XDG_CACHE_HOME cannot redirect, from being shared by concurrent groups.
+        if (\preg_match('/(^| )--no-cache( |$)/', $args) !== 1) {
+            $args .= ' --no-cache';
         }
 
-        \fclose($pipes[0]);
-        \stream_set_blocking($pipes[1], false);
-        \stream_set_blocking($pipes[2], false);
-
-        return [
-            'args' => $args,
-            'entries' => $entries,
-            'command' => $command,
-            'cacheDir' => $cacheDir,
-            'process' => $process,
-            'stdout' => $pipes[1],
-            'stderr' => $pipes[2],
-            'stdoutBuffer' => '',
-            'startedAt' => \microtime(true),
-        ];
+        return \sprintf(
+            // exec replaces the shell, so killing the process proc_open() returns kills Psalm itself.
+            '%s%s --output-format=json %s %s',
+            \PHP_OS_FAMILY === 'Windows' ? '' : 'exec ',
+            \escapeshellarg($this->psalmPath),
+            $args,
+            \implode(' ', array_map(static fn(array $entry): string => \escapeshellarg($entry['file']), $entries)),
+        );
     }
 
     private function createGroupCacheDir(): string
@@ -249,191 +240,12 @@ final readonly class PsalmTester
     }
 
     /**
-     * @param array<int, RunningGroup> $running
+     * @param array<array-key, array{file: string, test: PsalmTest}> $entries
      * @param array<array-key, string> $results
      * @param-out array<array-key, string> $results
      */
-    private function drainAndFinalize(array &$running, array &$results): void
+    private function collectGroupResults(string $args, array $entries, string $output, array &$results): void
     {
-        // Progress lines are printed in completion order (non-deterministic across parallel groups).
-        while ($running !== []) {
-            if ($this->timeoutSeconds !== null) {
-                $this->finalizeTimedOutGroups($running, $results, $this->timeoutSeconds);
-
-                if ($running === []) {
-                    break;
-                }
-            }
-
-            $readable = [];
-            foreach ($running as $proc) {
-                if ($proc['stdout'] !== null) {
-                    $readable[] = $proc['stdout'];
-                }
-                if ($proc['stderr'] !== null) {
-                    $readable[] = $proc['stderr'];
-                }
-            }
-
-            if ($readable === []) {
-                break;
-            }
-
-            $write = null;
-            $except = null;
-            $ready = @\stream_select($readable, $write, $except, 1);
-
-            if ($ready === false) {
-                continue;
-            }
-
-            foreach (array_keys($running) as $key) {
-                $stdout = $running[$key]['stdout'];
-                if ($stdout !== null && \in_array($stdout, $readable, true)) {
-                    $chunk = \fread($stdout, 65536);
-                    if ($chunk === false || ($chunk === '' && \feof($stdout))) {
-                        \fclose($stdout);
-                        $running[$key]['stdout'] = null;
-                    } elseif ($chunk !== '') {
-                        $running[$key]['stdoutBuffer'] .= $chunk;
-                    }
-                }
-
-                $stderr = $running[$key]['stderr'];
-                if ($stderr !== null && \in_array($stderr, $readable, true)) {
-                    $chunk = \fread($stderr, 65536);
-                    if ($chunk === false || ($chunk === '' && \feof($stderr))) {
-                        \fclose($stderr);
-                        $running[$key]['stderr'] = null;
-                    } elseif ($chunk !== '') {
-                        // Mirror shell_exec behavior: stderr falls through to the parent terminal.
-                        \fwrite(\STDERR, $chunk);
-                    }
-                }
-
-                if ($running[$key]['stdout'] === null && $running[$key]['stderr'] === null) {
-                    \proc_close($running[$key]['process']);
-                    $finalized = $running[$key];
-                    unset($running[$key]);
-                    $this->collectGroupResults($finalized, $results);
-                }
-            }
-        }
-    }
-
-    /**
-     * Terminates and finalizes any group that has been running longer than $timeoutSeconds,
-     * writing a failure output naming its args and the timeout to every test in that group.
-     * Groups still within budget are left untouched, so other groups run to completion normally.
-     *
-     * @param array<int, RunningGroup> $running
-     * @param array<array-key, string> $results
-     * @param-out array<array-key, string> $results
-     */
-    private function finalizeTimedOutGroups(array &$running, array &$results, float $timeoutSeconds): void
-    {
-        $now = \microtime(true);
-
-        foreach (array_keys($running) as $key) {
-            $proc = $running[$key];
-
-            if ($now - $proc['startedAt'] < $timeoutSeconds) {
-                continue;
-            }
-
-            // Psalm re-execs itself into a child PHP process when its own restarter needs
-            // different ini/opcache/JIT settings (PsalmRestarter). That child is spawned via a
-            // plain fork+exec, not pcntl_exec(), so killing only the process proc_open() gave us
-            // leaves it running, orphaned under init and still burning CPU (and racing our cache
-            // dir cleanup). Discover descendants first, while the parent/ppid chain is still
-            // intact, then kill leaves before the root.
-            self::killDescendants(\proc_get_status($proc['process'])['pid']);
-
-            // Signal 9 = SIGKILL, passed as a literal so this doesn't need ext-pcntl for the
-            // constant.
-            @\proc_terminate($proc['process'], 9);
-
-            if ($proc['stdout'] !== null) {
-                @\fclose($proc['stdout']);
-            }
-            if ($proc['stderr'] !== null) {
-                @\fclose($proc['stderr']);
-            }
-            @\proc_close($proc['process']);
-            unset($running[$key]);
-
-            $message = \sprintf(
-                'PsalmTimeout: group [%s] did not finish within %.1fs and was terminated.',
-                $proc['args'],
-                $timeoutSeconds,
-            );
-            foreach (array_keys($proc['entries']) as $id) {
-                $results[$id] = $message;
-            }
-        }
-    }
-
-    /**
-     * Best-effort: kills every process descended from $rootPid (not $rootPid itself), deepest
-     * generation first, so a still-alive parent never gets the chance to reparent a child we
-     * already accounted for. Shells out to `ps`/`kill` rather than posix_kill()/pcntl, since
-     * neither extension is required by this package.
-     */
-    private static function killDescendants(int $rootPid): void
-    {
-        foreach (array_reverse(self::collectDescendantGenerations($rootPid)) as $generation) {
-            foreach ($generation as $pid) {
-                /** @psalm-suppress ForbiddenCode */
-                @\shell_exec('kill -9 ' . $pid . ' 2>/dev/null');
-            }
-        }
-    }
-
-    /**
-     * @return list<list<int>> descendant pids grouped by generation, direct children first
-     */
-    private static function collectDescendantGenerations(int $rootPid): array
-    {
-        /** @psalm-suppress ForbiddenCode */
-        $output = (string) @\shell_exec('ps -A -o pid=,ppid= 2>/dev/null');
-
-        /** @var array<int, list<int>> */
-        $childrenByParent = [];
-        foreach (\explode("\n", \trim($output)) as $line) {
-            if (\preg_match('/^\s*(\d+)\s+(\d+)\s*$/', $line, $matches) !== 1) {
-                continue;
-            }
-            $childrenByParent[(int) $matches[2]][] = (int) $matches[1];
-        }
-
-        $generations = [];
-        $frontier = $childrenByParent[$rootPid] ?? [];
-
-        while ($frontier !== []) {
-            $generations[] = $frontier;
-            $next = [];
-            foreach ($frontier as $pid) {
-                foreach ($childrenByParent[$pid] ?? [] as $childPid) {
-                    $next[] = $childPid;
-                }
-            }
-            $frontier = $next;
-        }
-
-        return $generations;
-    }
-
-    /**
-     * @param RunningGroup $proc
-     * @param array<array-key, string> $results
-     * @param-out array<array-key, string> $results
-     */
-    private function collectGroupResults(array $proc, array &$results): void
-    {
-        $args = $proc['args'];
-        $entries = $proc['entries'];
-        $output = $proc['stdoutBuffer'];
-
         $decoded = $this->decodeOutput($output, $args);
 
         /** @var array<string, list<array{type: string, column_from: int, line_from: int, message: string, file_path: string, ...}>> */
@@ -445,7 +257,6 @@ final readonly class PsalmTester
         }
 
         $this->writeProgressStart($args);
-        $groupCount = 0;
         foreach ($entries as $id => $entry) {
             $resolved = \realpath($entry['file']);
             $key = $resolved !== false ? $resolved : $entry['file'];
@@ -453,9 +264,8 @@ final readonly class PsalmTester
                 $errorsByFile[$key] ?? [],
                 $entry['test']->codeFirstLine,
             );
-            $groupCount++;
         }
-        $this->writeProgressEnd($groupCount);
+        $this->writeProgressEnd(\count($entries));
     }
 
     /**
@@ -537,6 +347,8 @@ final readonly class PsalmTester
         }
 
         if (file_put_contents($file, $contents) === false) {
+            @unlink($file);
+
             throw new \RuntimeException(\sprintf('Failed to write temporary code file: %s.', $file));
         }
 

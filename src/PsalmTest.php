@@ -150,9 +150,12 @@ final readonly class PsalmTest
         return $results;
     }
 
+    /**
+     * @return positive-int
+     */
     private static function resolveConcurrency(?int $concurrency): int
     {
-        $concurrency ??= self::detectCpuCount();
+        $concurrency ??= ProcessRunner::cpuCount();
 
         if ($concurrency < 1) {
             throw new \InvalidArgumentException('$concurrency must be at least 1.');
@@ -163,108 +166,58 @@ final readonly class PsalmTest
 
     /**
      * @param array<array-key, string> $scriptsById
+     * @param positive-int $concurrency
      * @return array<array-key, ?string>
      */
     private static function evaluateSkipifScripts(array $scriptsById, int $concurrency): array
     {
         $results = [];
+        /** @var array<array-key, array{command: non-empty-list<string>}> $jobs */
+        $jobs = [];
+        /** @var list<string> $scriptFiles */
+        $scriptFiles = [];
 
-        foreach (\array_chunk($scriptsById, $concurrency, preserve_keys: true) as $batch) {
-            foreach (self::runSkipifBatch($batch) as $id => $reason) {
-                $results[$id] = $reason;
+        try {
+            foreach ($scriptsById as $id => $script) {
+                $scriptFile = self::writeSkipifScript($script, $id);
+                $scriptFiles[] = $scriptFile;
+                // Its own PHP process, so die()/exit() in the script cannot end this run.
+                $jobs[$id] = ['command' => [\PHP_BINARY, $scriptFile]];
+            }
+
+            ProcessRunner::run(
+                $jobs,
+                $concurrency,
+                \sys_get_temp_dir(),
+                static function (int|string $id, ?string $output) use (&$results): void {
+                    $output = \trim((string) $output);
+                    $results[$id] = \stripos($output, 'skip') === 0 ? \ltrim(\substr($output, 4)) : null;
+                },
+            );
+        } finally {
+            foreach ($scriptFiles as $scriptFile) {
+                @\unlink($scriptFile);
             }
         }
 
         return $results;
     }
 
-    /**
-     * Launches one process per script, then reads each to completion in turn. Since every
-     * process in the batch is already running by the time we start reading, wall time is
-     * bounded by the slowest script in the batch, not their sum.
-     *
-     * @param array<array-key, string> $scriptsById
-     * @return array<array-key, ?string>
-     */
-    private static function runSkipifBatch(array $scriptsById): array
+    private static function writeSkipifScript(string $script, int|string $id): string
     {
-        /** @var array<array-key, array{tempFile: string, process: resource, stdout: ?resource}> */
-        $running = [];
+        $scriptFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
 
-        try {
-            foreach ($scriptsById as $id => $script) {
-                $running[$id] = self::startSkipifProcess($script, $id);
-            }
-
-            $results = [];
-
-            foreach (array_keys($running) as $id) {
-                $stdout = $running[$id]['stdout'];
-                \assert($stdout !== null);
-                $output = \trim((string) \stream_get_contents($stdout));
-                \fclose($stdout);
-                \proc_close($running[$id]['process']);
-                $running[$id]['stdout'] = null; // mark closed so the finally below skips it
-                $results[$id] = \stripos($output, 'skip') === 0 ? \ltrim(\substr($output, 4)) : null;
-            }
-
-            return $results;
-        } finally {
-            // If startSkipifProcess() throws partway through the first loop above, or the
-            // second loop throws before finishing, any process still open here (stdout !== null)
-            // was started but never drained/closed — close it too, not just its temp file.
-            foreach ($running as $proc) {
-                if ($proc['stdout'] !== null) {
-                    @\fclose($proc['stdout']);
-                    @\proc_close($proc['process']);
-                }
-                @\unlink($proc['tempFile']);
-            }
+        if ($scriptFile === false) {
+            throw new \RuntimeException(\sprintf('Failed to create temporary SKIPIF file for %s.', $id));
         }
-    }
 
-    /**
-     * @return array{tempFile: string, process: resource, stdout: resource}
-     */
-    private static function startSkipifProcess(string $script, int|string $id): array
-    {
-        $tempFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
+        if (\file_put_contents($scriptFile, $script) === false) {
+            @\unlink($scriptFile);
 
-        if ($tempFile === false || \file_put_contents($tempFile, $script) === false) {
             throw new \RuntimeException(\sprintf('Failed to write temporary SKIPIF file for %s.', $id));
         }
 
-        // stderr inherits the parent's (like shell_exec did), not a pipe: a closed/unread pipe
-        // means the script's first stderr write (a warning, or display_errors=stderr) raises
-        // SIGPIPE and kills it before it ever reaches its skip echo.
-        $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => \STDERR];
-        $pipes = [];
-        $process = \proc_open([\PHP_BINARY, $tempFile], $descriptors, $pipes);
-
-        if (!\is_resource($process)) {
-            @\unlink($tempFile);
-
-            throw new \RuntimeException(\sprintf('Failed to run SKIPIF script for %s.', $id));
-        }
-
-        \fclose($pipes[0]);
-
-        return ['tempFile' => $tempFile, 'process' => $process, 'stdout' => $pipes[1]];
-    }
-
-    private static function detectCpuCount(): int
-    {
-        if (\PHP_OS_FAMILY === 'Windows') {
-            $count = (int) \getenv('NUMBER_OF_PROCESSORS');
-
-            return $count > 0 ? $count : 1;
-        }
-
-        $probe = \PHP_OS_FAMILY === 'Darwin' ? 'sysctl -n hw.ncpu' : 'nproc';
-        /** @psalm-suppress ForbiddenCode */
-        $count = (int) \trim((string) @\shell_exec($probe));
-
-        return $count > 0 ? $count : 1;
+        return $scriptFile;
     }
 
     /**

@@ -133,6 +133,20 @@ final class PsalmTesterTestMethodTest extends TestCase
         self::assertTrue(true);
     }
 
+    public function testTestRunsRealPsalmAndShiftsErrorLineByCodeFirstLine(): void
+    {
+        $tester = PsalmTester::create(showProgress: false);
+
+        // As if $code started on line 10 of a .phpt file: line 2 of $code is reported as line 11.
+        $tester->test(new PsalmTest(
+            code: "<?php\n\$unused = 1;\n",
+            constraint: new StringMatchesFormatDescription('UnusedVariable on line 11: %s'),
+            codeFirstLine: 10,
+        ));
+
+        self::assertTrue(true);
+    }
+
     private static function createStubTester(): PsalmTester
     {
         return PsalmTester::create(psalmPath: self::STUB_PATH, showProgress: false);
