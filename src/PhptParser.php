@@ -12,7 +12,7 @@ namespace AliesDev\PsalmTester;
 final class PhptParser
 {
     /** TEST is php-src's description section: accepted, not used. */
-    private const SUPPORTED = ['TEST', 'SKIPIF', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
+    private const SUPPORTED = ['TEST', 'SKIPIF', 'XFAIL', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
 
     /** Real run-tests.php sections whose semantics psalm-tester does not implement. */
     private const NOT_SUPPORTED = ['CLEAN', 'ENV', 'INI'];
@@ -21,29 +21,42 @@ final class PhptParser
      * Section name => [content, line number of the content's first line].
      *
      * @return PhptSections
-     * @psalm-pure This reads the filesystem via file(), so it is not truly pure; the
-     *     annotation is required only because Psalm's impure-function list omits file()
-     *     (unlike e.g. file_get_contents()), so Psalm would otherwise report MissingPureAnnotation.
+     * @psalm-pure
      */
-    public static function parse(string $phptFile): array
+    public static function parseSource(string $raw, string $phptFile): array
     {
-        $name = null;
-        /** @var array<string, list<string>> $contents */
-        $contents = [];
-        /** @var array<string, positive-int> $firstLines */
-        $firstLines = [];
-        $lineNumber = 0;
+        ['lines' => $lines, 'sections' => $bounds] = self::scan($raw, $phptFile);
+        $sections = [];
 
-        $lines = file($phptFile, FILE_IGNORE_NEW_LINES);
-
-        if ($lines === false) {
-            throw new \RuntimeException(\sprintf('Failed to read file %s.', $phptFile));
+        foreach ($bounds as $name => ['start' => $start, 'end' => $end]) {
+            $body = \array_map(self::stripEol(...), \array_slice($lines, $start, $end - $start));
+            $sections[$name] = [\implode("\n", $body), $start + 1];
         }
 
-        foreach ($lines as $line) {
-            ++$lineNumber;
+        /** @var PhptSections */
+        return $sections;
+    }
 
-            if (preg_match('/^--([_A-Z]+)--/', $line, $matches)) {
+    /**
+     * The one place that decides where sections are, shared by parseSource() and PhptRewriter so they
+     * cannot disagree: $lines keep their line ending, and a section's body is
+     * $lines[start] .. $lines[end - 1], right after its header line $lines[start - 1].
+     *
+     * @return array{lines: list<string>, sections: array<non-empty-string, array{start: int, end: int}>}
+     * @psalm-pure
+     */
+    public static function scan(string $raw, string $phptFile): array
+    {
+        $split = \preg_split('/(?<=\n)/', $raw, -1, \PREG_SPLIT_NO_EMPTY);
+        $lines = $split === false ? [] : $split;
+        /** @var array<non-empty-string, int> $starts */
+        $starts = [];
+        /** @var array<non-empty-string, int> $ends */
+        $ends = [];
+        $current = null;
+
+        foreach ($lines as $index => $line) {
+            if (\preg_match('/^--([_A-Z]+)--/', $line, $matches) === 1) {
                 $section = $matches[1];
 
                 if (\in_array($section, self::NOT_SUPPORTED, true)) {
@@ -54,28 +67,52 @@ final class PhptParser
                     throw new \InvalidArgumentException(\sprintf('Unknown section --%s-- in %s.', $section, $phptFile));
                 }
 
-                /** @var non-empty-string widened back: $sections is keyed by string */
-                $name = $section;
+                if (isset($starts[$section])) {
+                    throw new \InvalidArgumentException(\sprintf('Duplicate section --%s-- in %s.', $section, $phptFile));
+                }
 
-                $contents[$name] = [];
-                $firstLines[$name] = $lineNumber + 1;
+                if ($current !== null) {
+                    $ends[$current] = $index;
+                }
+
+                $starts[$section] = $index + 1;
+                $current = $section;
 
                 continue;
             }
 
-            if ($name === null) {
+            if ($current === null) {
                 throw new \LogicException(\sprintf('%s must start with a section delimiter, e.g. --FILE--.', $phptFile));
             }
+        }
 
-            $contents[$name][] = $line;
+        if ($current !== null) {
+            $ends[$current] = \count($lines);
         }
 
         $sections = [];
-        foreach ($contents as $section => $lines) {
-            $sections[$section] = [\implode("\n", $lines), $firstLines[$section]];
+        foreach ($starts as $section => $start) {
+            $sections[$section] = ['start' => $start, 'end' => $ends[$section] ?? $start];
         }
 
-        /** @var PhptSections */
-        return $sections;
+        return ['lines' => $lines, 'sections' => $sections];
+    }
+
+    /**
+     * Drops a line's "\n" or "\r\n", as file(..., FILE_IGNORE_NEW_LINES) did.
+     *
+     * @psalm-pure
+     */
+    public static function stripEol(string $line): string
+    {
+        if (\str_ends_with($line, "\n")) {
+            $line = \substr($line, 0, -1);
+
+            if (\str_ends_with($line, "\r")) {
+                $line = \substr($line, 0, -1);
+            }
+        }
+
+        return $line;
     }
 }

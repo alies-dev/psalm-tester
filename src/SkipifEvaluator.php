@@ -44,6 +44,8 @@ final class SkipifEvaluator
                 $jobs,
                 $concurrency,
                 $temporaryDirectory,
+                // As in php-src's run-tests.php only the output decides: a script that crashes after
+                // echoing "skip ..." still skips, and one that crashes silently lets the test run.
                 static function (int|string $id, ?string $output) use (&$results): void {
                     $output = \trim((string) $output);
                     /** @var TKey $id */

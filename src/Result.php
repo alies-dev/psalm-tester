@@ -32,6 +32,10 @@ final readonly class Result
     {
         $passed = $phpt->expectation->constraint()->evaluate($output, '', true) === true;
 
+        if ($phpt->xfail !== null) {
+            return new self($phpt, $passed ? Outcome::XPassed : Outcome::XFailed, $output, $issues, $phpt->xfail);
+        }
+
         return new self($phpt, $passed ? Outcome::Passed : Outcome::Failed, $output, $issues);
     }
 
@@ -60,10 +64,10 @@ final readonly class Result
     public function assert(): void
     {
         match ($this->outcome) {
-            Outcome::Passed, Outcome::Failed => Assert::assertThat($this->output, $this->phpt->expectation->constraint()),
+            Outcome::Passed, Outcome::Failed => Assert::assertThat($this->output, $this->phpt->expectation->constraint(), (string) $this->reason),
             Outcome::Skipped => Assert::markTestSkipped((string) $this->reason),
             Outcome::XFailed => Assert::markTestIncomplete((string) $this->reason),
-            Outcome::XPassed => Assert::fail('XPASS: the test passed, remove its --XFAIL-- section. ' . (string) $this->reason),
+            Outcome::XPassed => Assert::fail(\sprintf('XPASS: %s now matches its expectation; remove --XFAIL-- (%s)', $this->phpt->path !== '' ? $this->phpt->path : '(in-code test)', (string) $this->reason)),
             Outcome::Updated => Assert::assertTrue(true),
             Outcome::Error => Assert::fail((string) $this->reason),
         };

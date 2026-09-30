@@ -52,6 +52,22 @@ if ($stderr !== '') {
 
 $mode = (string) ($options['mode'] ?? (\getenv('STUB_MODE') ?: 'per_file'));
 
+// --stub-exit=<code> ends with that exit status (after the output); --stub-exit=signal with SIGKILL.
+if (isset($options['exit'])) {
+    $exit = $options['exit'];
+    \register_shutdown_function(static function () use ($exit): void {
+        if ($exit === 'signal') {
+            \posix_kill(\getmypid(), 9);
+        }
+        exit((int) $exit);
+    });
+}
+
+if ($mode === 'object_json') {
+    \fwrite(\STDOUT, '{}');
+    exit(0);
+}
+
 if ($mode === 'empty') {
     \fwrite(\STDOUT, '[]');
     exit(0);
@@ -140,6 +156,15 @@ if ($mode === 'large') {
                 'file_path' => $file,
             ];
         }
+    }
+} elseif ($mode === 'two_lines') {
+    foreach ($files as $file) {
+        $errors[] = ['type' => 'StubError', 'line_from' => 1, 'column_from' => 1, 'message' => 'first', 'file_path' => $file];
+        $errors[] = ['type' => 'StubError', 'line_from' => 2, 'column_from' => 1, 'message' => 'second', 'file_path' => $file];
+    }
+} elseif ($mode === 'header_message') {
+    foreach ($files as $file) {
+        $errors[] = ['type' => 'StubError', 'line_from' => 1, 'column_from' => 1, 'message' => "line one\n--FOO--", 'file_path' => $file];
     }
 } elseif ($mode === 'foreign_file') {
     // An issue in a file Psalm was not asked about, as an included file would produce.

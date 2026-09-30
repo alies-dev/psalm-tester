@@ -7,7 +7,8 @@ namespace AliesDev\PsalmTester;
 /**
  * Splits an --ARGS-- section into argv tokens the way a POSIX shell would for plain words:
  * whitespace separates, single quotes are literal, double quotes allow \" \\ \$ \` escapes,
- * and a backslash outside quotes escapes the next character. No expansion of any kind.
+ * a backslash outside quotes escapes the next character, and backslash-newline outside single
+ * quotes is a line continuation. No expansion of any kind.
  *
  * @internal
  * @psalm-immutable
@@ -38,6 +39,8 @@ final class ArgumentTokenizer
             } elseif ($quote === '"') {
                 if ($char === '"') {
                     $quote = null;
+                } elseif ($char === '\\' && ($arguments[$i + 1] ?? '') === "\n") {
+                    ++$i; // line continuation
                 } elseif ($char === '\\' && $i + 1 < $length && \in_array($arguments[$i + 1], ['"', '\\', '$', '`'], true)) {
                     $token .= $arguments[++$i];
                 } else {
@@ -46,6 +49,8 @@ final class ArgumentTokenizer
             } elseif ($char === "'" || $char === '"') {
                 $quote = $char;
                 $inToken = true;
+            } elseif ($char === '\\' && ($arguments[$i + 1] ?? '') === "\n") {
+                ++$i; // line continuation
             } elseif ($char === '\\' && $i + 1 < $length) {
                 $token .= $arguments[++$i];
                 $inToken = true;
