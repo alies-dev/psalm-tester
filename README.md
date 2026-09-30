@@ -62,7 +62,7 @@ vendor/bin/phpunit --filter array_values                  # every data set whose
 vendor/bin/phpunit --filter 'testPhpt@array_values.phpt'  # exactly one data set
 ```
 
-One STDERR line sums up each batch, e.g. `psalm-tester: 3 phpt files (0 skipped), 2 Psalm runs`.
+At the start of the batch, one STDERR line sums it up, e.g. `psalm-tester: 3 phpt files (0 skipped), 2 Psalm runs`.
 
 Do not pass a directory holding fixtures on the command line (`vendor/bin/phpunit tests/Psalm`): PHPUnit then also
 runs every `.phpt` file as its own PHPT test, executing the code instead of analyzing it. A `<directory>` in
