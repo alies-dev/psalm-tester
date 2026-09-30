@@ -29,14 +29,14 @@ abstract class PsalmPhptTestCase extends TestCase
     /**
      * Directory holding the *.phpt files, searched recursively.
      *
-     * @psalm-suppress MissingAbstractPureAnnotation a purity contract here would bind every override
+     * @psalm-suppress MissingAbstractPureAnnotation, UnusedPsalmSuppress (Psalm 6 lacks the issue) a purity contract here would bind every override
      */
     abstract protected static function phptDirectory(): string;
 
     /**
      * Override to configure the tester (config, arguments, timeout, ...).
      *
-     * @psalm-suppress MissingPureAnnotation a purity contract here would bind every override
+     * @psalm-suppress MissingPureAnnotation, UnusedPsalmSuppress (Psalm 6 lacks the issue) a purity contract here would bind every override
      */
     protected static function tester(): PsalmTester
     {
