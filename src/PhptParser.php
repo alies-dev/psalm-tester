@@ -6,12 +6,13 @@ namespace AliesDev\PsalmTester;
 
 /**
  * @internal
+ * @psalm-immutable
  * @psalm-type PhptSections = array<non-empty-string, array{string, positive-int}>
  */
 final class PhptParser
 {
     /** TEST is php-src's description section: accepted, not used. */
-    private const SUPPORTED = ['TEST', 'SKIPIF', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
+    private const SUPPORTED = ['TEST', 'SKIPIF', 'XFAIL', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
 
     /** Real run-tests.php sections whose semantics psalm-tester does not implement. */
     private const NOT_SUPPORTED = ['CLEAN', 'ENV', 'INI'];
@@ -20,15 +21,10 @@ final class PhptParser
      * Section name => [content, line number of the content's first line].
      *
      * @return PhptSections
+     * @psalm-pure
      */
-    public static function parse(string $phptFile): array
+    public static function parseSource(string $raw, string $phptFile): array
     {
-        $raw = @\file_get_contents($phptFile);
-
-        if ($raw === false) {
-            throw new \RuntimeException(\sprintf('Failed to read file %s.', $phptFile));
-        }
-
         ['lines' => $lines, 'sections' => $bounds] = self::scan($raw, $phptFile);
         $sections = [];
 
@@ -42,7 +38,7 @@ final class PhptParser
     }
 
     /**
-     * The one place that decides where sections are, shared by parse() and PhptRewriter so they
+     * The one place that decides where sections are, shared by parseSource() and PhptRewriter so they
      * cannot disagree: $lines keep their line ending, and a section's body is
      * $lines[start] .. $lines[end - 1], right after its header line $lines[start - 1].
      *

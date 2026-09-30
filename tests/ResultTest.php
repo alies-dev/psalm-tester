@@ -58,8 +58,34 @@ final class ResultTest extends TestCase
         (new Result(self::phpt(Expectation::exact('')), Outcome::XFailed, reason: 'known limitation'))->assert();
     }
 
-    private static function phpt(Expectation $expectation): Phpt
+    public function testFromAnalysisMapsToXFailedWhenXfailIsSetAndOutputMismatches(): void
     {
-        return new Phpt(code: '<?php', expectation: $expectation);
+        $result = Result::fromAnalysis(self::phpt(Expectation::exact('expected'), 'known limitation'), 'actual', []);
+
+        self::assertSame(Outcome::XFailed, $result->outcome);
+        self::assertSame('known limitation', $result->reason);
+    }
+
+    public function testFromAnalysisMapsToXPassedWhenXfailIsSetAndOutputMatches(): void
+    {
+        $result = Result::fromAnalysis(self::phpt(Expectation::exact('actual'), 'known limitation'), 'actual', []);
+
+        self::assertSame(Outcome::XPassed, $result->outcome);
+        self::assertSame('known limitation', $result->reason);
+    }
+
+    public function testAnXPassedResultFailsWithARemoveXfailMessage(): void
+    {
+        $phpt = new Phpt(code: '<?php', expectation: Expectation::exact(''), xfail: 'known limitation', path: '/tests/foo.phpt');
+
+        $this->expectException(AssertionFailedError::class);
+        $this->expectExceptionMessage('XPASS: /tests/foo.phpt now matches its expectation; remove --XFAIL-- (known limitation)');
+
+        (new Result($phpt, Outcome::XPassed, reason: 'known limitation'))->assert();
+    }
+
+    private static function phpt(Expectation $expectation, ?string $xfail = null): Phpt
+    {
+        return new Phpt(code: '<?php', expectation: $expectation, xfail: $xfail);
     }
 }

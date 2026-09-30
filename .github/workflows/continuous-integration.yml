@@ -102,10 +102,18 @@ jobs:
       - run: composer psalm -- --php-version=${{ matrix.php }} --stats --output-format=github --shepherd
 
   phpunit:
+    name: phpunit (PHP ${{ matrix.php }}, ${{ matrix.dependencies }} deps)
     runs-on: ubuntu-latest
     strategy:
       matrix:
         php: [8.2, 8.3, 8.4, 8.5]
+        dependencies: [locked]
+        include:
+          # The lowest supported set (--prefer-lowest --prefer-stable), so PHPUnit 11 and Psalm 6
+          # run in CI too. On the lowest supported PHP: it resolves to PHPUnit 11.5.50 (older 11.x
+          # releases are blocked by Composer's security advisory check) and Psalm 6.10.0.
+          - php: 8.2
+            dependencies: lowest
     steps:
       - uses: actions/checkout@v6
       - uses: shivammathur/setup-php@v2
@@ -114,5 +122,6 @@ jobs:
           coverage: none
       - uses: ramsey/composer-install@v3
         with:
+          dependency-versions: ${{ matrix.dependencies }}
           composer-options: --optimize-autoloader
       - run: composer test

@@ -120,6 +120,26 @@ final class PsalmTesterUpdateTest extends TestCase
         self::assertStringContainsString(\sprintf('updated: %s', $file), $stderr);
     }
 
+    public function testAnXfailTestKeepsItsOutcomeAndReasonUnderUpdateMode(): void
+    {
+        $contents = "--XFAIL--\nknown limitation\n--FILE--\n<?php // xfail-kept\n--EXPECT--\nwrong\n";
+        $file = $this->writePhpt($contents);
+
+        $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)->runOne(Phpt::fromFile($file));
+
+        self::assertSame(Outcome::XFailed, $result->outcome);
+        self::assertSame('known limitation', $result->reason);
+        self::assertSame($contents, \file_get_contents($file));
+    }
+
+    public function testXfailTestsAreNeverRewrittenUnderUpdateMode(): void
+    {
+        $file = $this->writePhpt("--XFAIL--\nknown limitation\n--FILE--\n<?php // xfail-report\n--EXPECT--\nwrong\n");
+        $stderr = $this->runInSubprocess($file, true, true);
+
+        self::assertStringContainsString(\sprintf('not updated: %s (has --XFAIL--)', $file), $stderr);
+    }
+
     public function testUpdateModeWritesNothingToStderrWithoutProgress(): void
     {
         // Any stderr fails a --process-isolation test, so the report stays in Result::$reason.
@@ -208,8 +228,13 @@ final class PsalmTesterUpdateTest extends TestCase
     {
         $broken = $this->writePhpt("--FILE--\n<?php // broken\n--EXPECT--\nstale\n");
         $fine = $this->writePhpt("--FILE--\n<?php // fine\n--EXPECT--\nstale\n");
-        $phpts = ['broken' => Phpt::fromFile($broken), 'fine' => Phpt::fromFile($fine)];
-        // Changed after parsing: the rewriter re-reads the file and must refuse to guess.
+        $parsed = Phpt::fromFile($broken);
+        // Built without a source hash, so the rewriter's own re-read (not the change check)
+        // meets the duplicate section and must refuse to guess.
+        $phpts = [
+            'broken' => new Phpt($parsed->code, $parsed->expectation, codeFirstLine: $parsed->codeFirstLine, path: $broken),
+            'fine' => Phpt::fromFile($fine),
+        ];
         $duplicated = "--FILE--\n<?php // broken\n--EXPECT--\nstale\n--EXPECT--\nstale\n";
         self::assertNotFalse(\file_put_contents($broken, $duplicated));
 
@@ -231,6 +256,53 @@ final class PsalmTesterUpdateTest extends TestCase
         $this->expectExceptionMessage(\sprintf('not updated: %s (EXPECTF cannot be rewritten)', $file));
 
         $result->assert();
+    }
+
+    public function testAFileChangedAfterParsingIsNotOverwritten(): void
+    {
+        $file = $this->writePhpt("--FILE--\n<?php // snapshot\n--EXPECT--\nstale\n");
+        $phpt = Phpt::fromFile($file);
+        // An editor save between parsing and the rewrite: both the edit and the (now stale)
+        // analysis of the old code must not be written over it.
+        $edited = "--FILE--\n<?php // edited meanwhile\n--EXPECT--\nstale\n";
+        self::assertNotFalse(\file_put_contents($file, $edited));
+
+        $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)->runOne($phpt);
+
+        self::assertSame(Outcome::Failed, $result->outcome);
+        self::assertSame(\sprintf('not updated: %s (changed during the run)', $file), $result->reason);
+        self::assertSame($edited, \file_get_contents($file));
+    }
+
+    public function testTheSameFileTwiceInOneRunIsRewrittenOnce(): void
+    {
+        $file = $this->writePhpt("--FILE--\n<?php // twice\n--EXPECT--\nstale\n");
+
+        $results = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)
+            ->run(['first' => Phpt::fromFile($file), 'second' => Phpt::fromFile($file)]);
+
+        self::assertSame(Outcome::Updated, $results['first']->outcome);
+        self::assertSame(Outcome::Updated, $results['second']->outcome, (string) $results['second']->reason);
+        self::assertSame("--FILE--\n<?php // twice\n--EXPECT--\nStubError on line 2: // twice\n", \file_get_contents($file));
+    }
+
+    public function testASymlinkedTestUpdatesItsTargetAndStaysALink(): void
+    {
+        $dir = $this->makeDir();
+        \mkdir($dir . '/real');
+        $target = $dir . '/real/test.phpt';
+        self::assertNotFalse(\file_put_contents($target, "--FILE--\n<?php // linked\n--EXPECT--\nstale\n"));
+        self::assertTrue(\symlink($target, $dir . '/link.phpt'));
+
+        $result = PsalmTester::create()->withPsalm(self::STUB_PATH)->withUpdate(true)->runOne(Phpt::fromFile($dir . '/link.phpt'));
+
+        self::assertSame(Outcome::Updated, $result->outcome, (string) $result->reason);
+        self::assertTrue(\is_link($dir . '/link.phpt'));
+        self::assertSame("--FILE--\n<?php // linked\n--EXPECT--\nStubError on line 2: // linked\n", \file_get_contents($target));
+        self::assertSame(['test.phpt'], \array_values(\array_diff(\scandir($dir . '/real') ?: [], ['.', '..'])));
+        @\unlink($dir . '/link.phpt');
+        @\unlink($target);
+        @\rmdir($dir . '/real');
     }
 
     public function testEnvVariableSetsTheDefault(): void

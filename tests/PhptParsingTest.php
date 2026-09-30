@@ -195,6 +195,19 @@ final class PhptParsingTest extends TestCase
         self::assertNull(Phpt::fromFile($file)->xfail);
     }
 
+    public function testFromFileCapturesTheXfailReason(): void
+    {
+        $test = Phpt::fromFile($this->writePhpt(<<<'PHPT'
+                --XFAIL--
+                known limitation: see #123
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT));
+
+        self::assertSame('known limitation: see #123', $test->xfail);
+    }
+
     public function testRunEvaluatesTheCarriedSkipifScriptWithoutRereadingTheFile(): void
     {
         $file = $this->writePhpt(<<<'PHPT'

@@ -17,8 +17,10 @@ final readonly class Phpt
      *     --config in them replaces the tester's configured config
      * @param positive-int $codeFirstLine line of the .phpt file that $code starts on
      * @param ?string $skipif the --SKIPIF-- script, if any
-     * @param ?string $xfail reserved for --XFAIL-- support; always null for now
+     * @param ?string $xfail the --XFAIL-- reason, if any: the test is expected to fail its expectation
      * @param string $path the .phpt file this was parsed from ('' when built in code)
+     * @param ?string $sourceHash sha1 of the bytes parsed, so update mode can tell whether the
+     *     file changed since (null when built in code)
      * @psalm-mutation-free
      */
     public function __construct(
@@ -29,6 +31,7 @@ final readonly class Phpt
         public ?string $skipif = null,
         public ?string $xfail = null,
         public string $path = '',
+        public ?string $sourceHash = null,
     ) {}
 
     /**
@@ -36,7 +39,13 @@ final readonly class Phpt
      */
     public static function fromFile(string $path): self
     {
-        $sections = PhptParser::parse($path);
+        $raw = @\file_get_contents($path);
+
+        if ($raw === false) {
+            throw new \RuntimeException(\sprintf('Failed to read file %s.', $path));
+        }
+
+        $sections = PhptParser::parseSource($raw, $path);
 
         if (!isset($sections['FILE'])) {
             throw new \LogicException(\sprintf('File %s must have a FILE section.', $path));
@@ -48,7 +57,9 @@ final readonly class Phpt
             arguments: $sections['ARGS'][0] ?? '',
             codeFirstLine: $sections['FILE'][1],
             skipif: $sections['SKIPIF'][0] ?? null,
+            xfail: isset($sections['XFAIL']) ? \rtrim($sections['XFAIL'][0]) : null,
             path: $path,
+            sourceHash: \sha1($raw),
         );
     }
 
