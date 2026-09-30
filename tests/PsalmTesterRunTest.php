@@ -396,6 +396,48 @@ final class PsalmTesterRunTest extends TestCase
         self::assertContains(['<?php // plain'], $invocations);
     }
 
+    public function testCountGroupsAgreesWithTheActualNumberOfInvocationsWhenConflictsAreInvolved(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        $tester = self::createTester();
+        // Same (default) --ARGS--, so without --CONFLICTS-- countGroups() would (wrongly) say 1.
+        $phpts = [
+            'conflicting' => new Phpt(code: '<?php // conflicting', expectation: Expectation::exact(''), conflicts: ['key']),
+            'plain' => new Phpt(code: '<?php // plain', expectation: Expectation::exact('')),
+        ];
+
+        $tester->run($phpts);
+        $actualInvocations = \count(\glob($logDir . '/*.json') ?: []);
+
+        self::assertSame($actualInvocations, $tester->countGroups($phpts));
+        self::assertSame(2, $actualInvocations);
+    }
+
+    public function testCountGroupsAgreesWithTheActualInvocationsForTwoFixturesSharingAKeyPlusAPlainOne(): void
+    {
+        $logDir = $this->makeScratchDir();
+        \putenv('STUB_MODE=record_contents');
+        \putenv('STUB_CONTENTS_LOG_DIR=' . $logDir);
+
+        $tester = self::createTester();
+        // Two --CONFLICTS-- fixtures sharing key 'db' each still get their own run (sharing a key
+        // only serializes them, it does not merge them), plus 'plain''s own: 3 runs, not 1.
+        $phpts = [
+            'a' => new Phpt(code: '<?php // a', expectation: Expectation::exact(''), conflicts: ['db']),
+            'b' => new Phpt(code: '<?php // b', expectation: Expectation::exact(''), conflicts: ['db']),
+            'plain' => new Phpt(code: '<?php // plain', expectation: Expectation::exact('')),
+        ];
+
+        $tester->run($phpts);
+        $actualInvocations = \count(\glob($logDir . '/*.json') ?: []);
+
+        self::assertSame(3, $actualInvocations);
+        self::assertSame($actualInvocations, $tester->countGroups($phpts));
+    }
+
     public function testTwoFixturesSharingAConflictsKeyNeverRunConcurrently(): void
     {
         $tester = self::createTester();

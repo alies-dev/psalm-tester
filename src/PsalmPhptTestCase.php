@@ -48,11 +48,7 @@ abstract class PsalmPhptTestCase extends TestCase
 
         // Unknown selection (e.g. a test run in a separate process): each test prepares itself,
         // silently.
-        self::prepare($relPaths ?? []);
-
-        if ($relPaths !== null) {
-            self::reportStart($relPaths);
-        }
+        self::prepare($relPaths ?? [], $relPaths !== null);
     }
     #[\Override]
     public static function tearDownAfterClass(): void
@@ -92,11 +88,13 @@ abstract class PsalmPhptTestCase extends TestCase
     }
 
     /**
-     * Parses and runs the given files, merging the outcome into this class's state.
+     * Parses and runs the given files, merging the outcome into this class's state. $reportStart
+     * (true only from the batch path, a known selection) additionally prints the start line once
+     * SKIPIF evaluation and grouping for this batch are done, before any Psalm process starts.
      *
      * @param list<string> $relPaths
      */
-    private static function prepare(array $relPaths): void
+    private static function prepare(array $relPaths, bool $reportStart = false): void
     {
         $state = self::$state[static::class];
         $directory = self::resolvePhptDirectory();
@@ -111,7 +109,14 @@ abstract class PsalmPhptTestCase extends TestCase
             }
         }
 
-        if ($phpts !== []) {
+        if ($reportStart && $phpts === []) {
+            self::reportStart(\count($relPaths), 0, 0);
+        } elseif ($reportStart) {
+            $state['results'] = static::tester()->runReportingPlan(
+                $phpts,
+                static fn(int $skipped, int $groups) => self::reportStart(\count($relPaths), $skipped, $groups),
+            ) + $state['results'];
+        } elseif ($phpts !== []) {
             $state['results'] = static::tester()->run($phpts) + $state['results'];
         }
 
@@ -119,26 +124,18 @@ abstract class PsalmPhptTestCase extends TestCase
     }
 
     /**
-     * One line on STDERR before the batch runs, e.g.
-     * "psalm-tester: 758 phpt files (53 skipped), 14 Psalm runs".
-     *
-     * @param list<string> $relPaths
+     * One line on STDERR, e.g. "psalm-tester: 758 phpt files (53 skipped), 14 Psalm runs".
      */
-    private static function reportStart(array $relPaths): void
+    private static function reportStart(int $files, int $skipped, int $groups): void
     {
-        $skipped = 0;
-        $analyzed = [];
-
-        foreach (self::$state[static::class]['results'] as $result) {
-            if ($result->outcome === Outcome::Skipped) {
-                ++$skipped;
-            } else {
-                $analyzed[] = $result->phpt;
-            }
-        }
-
-        $groups = static::tester()->countGroups($analyzed);
-        \fwrite(\STDERR, \sprintf("psalm-tester: %d phpt files (%d skipped), %d Psalm run%s\n", \count($relPaths), $skipped, $groups, $groups === 1 ? '' : 's'));
+        \fwrite(\STDERR, \sprintf(
+            "psalm-tester: %d phpt file%s (%d skipped), %d Psalm run%s\n",
+            $files,
+            $files === 1 ? '' : 's',
+            $skipped,
+            $groups,
+            $groups === 1 ? '' : 's',
+        ));
     }
 
     /**

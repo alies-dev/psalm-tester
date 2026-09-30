@@ -135,6 +135,33 @@ final readonly class PsalmTester
      */
     public function run(iterable $phpts): array
     {
+        return $this->runPlanned($phpts, null);
+    }
+
+    /**
+     * @internal PsalmPhptTestCase's start line only: same as run(), but calls $onPlanned once
+     * SKIPIF evaluation and grouping are done and before any Psalm process starts, with the
+     * skipped count and the number of Psalm invocations about to run.
+     *
+     * @template TKey of array-key
+     * @param iterable<TKey, Phpt> $phpts keys must be unique
+     * @param callable(int, int): void $onPlanned
+     * @return array<TKey, Result> in the order of $phpts
+     */
+    public function runReportingPlan(iterable $phpts, callable $onPlanned): array
+    {
+        return $this->runPlanned($phpts, $onPlanned);
+    }
+
+    /**
+     * @template TKey of array-key
+     * @param iterable<TKey, Phpt> $phpts keys must be unique
+     * @param ?callable(int, int): void $onPlanned null for plain run(): the group count it would
+     *     otherwise need is skipped too, not just the call
+     * @return array<TKey, Result> in the order of $phpts
+     */
+    private function runPlanned(iterable $phpts, ?callable $onPlanned): array
+    {
         $unique = [];
         foreach ($phpts as $id => $phpt) {
             if (\array_key_exists($id, $unique)) {
@@ -162,6 +189,10 @@ final readonly class PsalmTester
             }
         }
 
+        if ($onPlanned !== null) {
+            $onPlanned(\count($phpts) - \count($toAnalyze), $this->countGroups($toAnalyze));
+        }
+
         $analyzed = $toAnalyze === [] ? [] : $this->analyze($toAnalyze, $concurrency, $env, $temporaryDirectory);
 
         $results = [];
@@ -183,7 +214,7 @@ final readonly class PsalmTester
 
         foreach ($phpts as $phpt) {
             try {
-                $keys[\implode("\0", self::groupKeyTokens($this->effectiveArguments($phpt)))] = true;
+                $keys[self::groupKey($phpt, $this->effectiveArguments($phpt))] = true;
             } catch (\InvalidArgumentException) {
                 // Invalid --ARGS--: run() gives it its own error result, no Psalm process for it.
             }
@@ -228,14 +259,7 @@ final readonly class PsalmTester
 
                 $file = self::createTemporaryCodeFile($temporaryDirectory, $phpt->code);
                 $tempFiles[] = $file;
-                $key = \implode("\0", self::groupKeyTokens($argv));
-
-                // --CONFLICTS--: never co-analyzed with another test, conflicting or not, so it
-                // needs a group key nothing else can share, regardless of matching arguments.
-                if ($phpt->conflicts !== []) {
-                    $key .= "\0conflicts:" . (string) $id;
-                }
-
+                $key = self::groupKey($phpt, $argv);
                 $groups[$key]['argv'] = $argv;
                 $groups[$key]['entries'][$id] = ['file' => $file, 'phpt' => $phpt];
             }
@@ -390,6 +414,21 @@ final readonly class PsalmTester
         \sort($args, \SORT_STRING);
 
         return $args;
+    }
+
+    /**
+     * The Psalm-run group key for $phpt: run() and countGroups() both build it through here, so
+     * they cannot drift apart again. --CONFLICTS--: never co-analyzed with another test,
+     * conflicting or not, so it gets a key nothing else can share, regardless of matching
+     * arguments; spl_object_id() is unique per Phpt instance for exactly that purpose.
+     *
+     * @param list<string> $argv
+     */
+    private static function groupKey(Phpt $phpt, array $argv): string
+    {
+        $key = \implode("\0", self::groupKeyTokens($argv));
+
+        return $phpt->conflicts === [] ? $key : $key . "\0conflicts:" . \spl_object_id($phpt);
     }
 
     /**

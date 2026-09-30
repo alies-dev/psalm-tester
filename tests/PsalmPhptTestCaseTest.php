@@ -68,6 +68,15 @@ final class PsalmPhptTestCaseTest extends TestCase
         self::assertStringContainsString('psalm-tester: 4 phpt files (1 skipped), 1 Psalm run', $output);
     }
 
+    public function testTheStartLineIsSingularForOneFileAndOneRun(): void
+    {
+        [, $output] = $this->runFixture(['--filter', 'testPhpt@sub/gamma.phpt']);
+
+        self::assertStringContainsString('psalm-tester: 1 phpt file (0 skipped), 1 Psalm run', $output);
+        self::assertStringNotContainsString('1 phpt files', $output);
+        self::assertStringNotContainsString('1 Psalm runs', $output);
+    }
+
     public function testPrintsTheStartLineExactlyOnceUnderProcessIsolationToo(): void
     {
         // setUpBeforeClass() runs once in PHPUnit's coordinating process even with
@@ -77,6 +86,59 @@ final class PsalmPhptTestCaseTest extends TestCase
 
         self::assertSame(0, $exitCode, $output);
         self::assertSame(1, \substr_count($output, 'psalm-tester: 4 phpt files (1 skipped), 1 Psalm run'), $output);
+    }
+
+    public function testTheStartLineAppearsBeforeAnyPsalmProcessStarts(): void
+    {
+        // A 1s stub sleep gives a wide, unmissable window: if the line only appeared after the
+        // Psalm run finished (the bug), it would show up near the full 1s+ mark, not well under it.
+        $root = \dirname(__DIR__);
+        $command = [
+            \PHP_BINARY,
+            $root . '/vendor/bin/phpunit',
+            '--no-configuration',
+            '--bootstrap',
+            $root . '/vendor/autoload.php',
+            '--no-progress',
+            '--colors=never',
+            self::FIXTURE,
+        ];
+
+        $env = \getenv();
+        $env['STUB_MODE'] = 'record_contents';
+        $env['STUB_CONTENTS_LOG_DIR'] = $this->logDir;
+        $env['STUB_SLEEP'] = '1';
+
+        $pipes = [];
+        $start = \microtime(true);
+        $process = \proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, $env);
+        self::assertIsResource($process);
+        \stream_set_blocking($pipes[1], false);
+        \stream_set_blocking($pipes[2], false);
+
+        $output = '';
+        $seenAfter = null;
+
+        do {
+            $output .= (string) \stream_get_contents($pipes[1]) . (string) \stream_get_contents($pipes[2]);
+
+            if ($seenAfter === null && \str_contains($output, 'psalm-tester:')) {
+                $seenAfter = \microtime(true) - $start;
+            }
+
+            $running = \proc_get_status($process)['running'];
+
+            if ($running) {
+                \usleep(10_000);
+            }
+        } while ($running);
+
+        \fclose($pipes[1]);
+        \fclose($pipes[2]);
+        \proc_close($process);
+
+        self::assertNotNull($seenAfter, 'The start line never appeared.' . $output);
+        self::assertLessThan(0.5, $seenAfter, \sprintf('Start line appeared after %.2fs, not well before the 1s stub sleep.', $seenAfter));
     }
 
     public function testDataSetFilterSelectsANestedFileByItsRelativePath(): void
