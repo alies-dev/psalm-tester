@@ -112,8 +112,9 @@ working directory and environment:
 
 Psalm is started without a shell. Its arguments are the tester's (default `--no-progress --no-diff`), then
 `--config=<the configured psalm.xml>`, then the test's `--ARGS--`, split into words like a shell would (quotes and
-backslashes work, nothing is expanded). A config option (`--config=x`, `--config x` or `-c x`) in either the tester's
-arguments or `--ARGS--` replaces the configured config:
+backslashes work, nothing is expanded). A config option (`--config=x`, `--config x` or `-c x`) in the test's
+`--ARGS--` replaces whatever config would otherwise be used, including one already set in the tester's own
+arguments (`withArguments('--config=...')`), so Psalm never sees two `--config` options:
 
 ```phpt
 --ARGS--

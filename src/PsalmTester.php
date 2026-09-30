@@ -321,7 +321,9 @@ final readonly class PsalmTester
 
     /**
      * The group key and the arguments Psalm gets: the configured arguments, then --config (unless
-     * those or the test's --ARGS-- have one), then the test's --ARGS-- tokens.
+     * those or the test's --ARGS-- have one), then the test's --ARGS-- tokens. A --config in
+     * --ARGS-- replaces any configured one (the bundled default AND an explicit withArguments()
+     * one), so Psalm never sees two --config options ("Too many config files provided").
      *
      * @return list<string>
      * @psalm-mutation-free
@@ -331,7 +333,9 @@ final readonly class PsalmTester
         $testArgs = ArgumentTokenizer::tokenize($phpt->arguments);
         $args = $this->options['arguments'];
 
-        if (!self::hasConfigOption($args) && !self::hasConfigOption($testArgs)) {
+        if (self::hasConfigOption($testArgs)) {
+            $args = self::stripConfigOption($args);
+        } elseif (!self::hasConfigOption($args)) {
             $args[] = '--config=' . $this->options['config'];
         }
 
@@ -351,6 +355,34 @@ final readonly class PsalmTester
         }
 
         return false;
+    }
+
+    /**
+     * @param list<string> $args
+     * @return list<string>
+     * @psalm-pure
+     */
+    private static function stripConfigOption(array $args): array
+    {
+        $stripped = [];
+
+        for ($i = 0, $count = \count($args); $i < $count; ++$i) {
+            $arg = $args[$i];
+
+            if ($arg === '--config' || $arg === '-c') {
+                ++$i; // also drop its value token
+
+                continue;
+            }
+
+            if (\str_starts_with($arg, '--config=') || \str_starts_with($arg, '-c')) {
+                continue;
+            }
+
+            $stripped[] = $arg;
+        }
+
+        return $stripped;
     }
 
     /**
