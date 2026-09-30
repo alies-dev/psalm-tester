@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Upgrade steps between versions are in
 [UPGRADING.md](UPGRADING.md).
 
-## [0.4.0] (unreleased)
+## [0.4.0] (2026-09-30)
 
 ### Added
 
@@ -62,6 +62,6 @@ All notable changes to this project are documented here. The format follows
 - `vimeo/psalm` (`^6.10 || ^7.0.0-beta16`) and `composer-runtime-api` (`^2`) are now required dependencies.
 - Updated dependencies.
 
-[0.4.0]: https://github.com/alies-dev/psalm-tester/compare/0.3.0...HEAD
+[0.4.0]: https://github.com/alies-dev/psalm-tester/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/alies-dev/psalm-tester/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/alies-dev/psalm-tester/releases/tag/0.2.0
