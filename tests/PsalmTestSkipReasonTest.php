@@ -160,6 +160,22 @@ final class PsalmTestSkipReasonTest extends TestCase
         PsalmTest::getSkipReasons([], concurrency: 0);
     }
 
+    public function testGetSkipReasonSurvivesTheScriptWritingToStderrFirst(): void
+    {
+        // A closed stderr pipe means the child's first stderr write raises SIGPIPE and kills
+        // it before the skip echo ever runs. Real SKIPIF scripts commonly warn (or run under
+        // display_errors=stderr) before deciding to skip, so stderr must stay usable.
+        $reason = PsalmTest::getSkipReason($this->writePhpt(<<<'PHPT'
+                --SKIPIF--
+                <?php fwrite(STDERR, 'warn'); echo 'skip after stderr';
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT));
+
+        self::assertSame('after stderr', $reason);
+    }
+
     private function writePhpt(string $contents): string
     {
         $file = \tempnam(\sys_get_temp_dir(), 'psalm_test_skipif_');

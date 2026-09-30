@@ -123,7 +123,7 @@ final readonly class PsalmTest
      */
     private static function runSkipifBatch(array $scriptsByFile): array
     {
-        /** @var array<string, array{tempFile: string, process: resource, stdout: resource}> */
+        /** @var array<string, array{tempFile: string, process: resource, stdout: ?resource}> */
         $running = [];
 
         try {
@@ -133,16 +133,26 @@ final readonly class PsalmTest
 
             $results = [];
 
-            foreach ($running as $phptFile => $proc) {
-                $output = \trim((string) \stream_get_contents($proc['stdout']));
-                \fclose($proc['stdout']);
-                \proc_close($proc['process']);
+            foreach (array_keys($running) as $phptFile) {
+                $stdout = $running[$phptFile]['stdout'];
+                \assert($stdout !== null);
+                $output = \trim((string) \stream_get_contents($stdout));
+                \fclose($stdout);
+                \proc_close($running[$phptFile]['process']);
+                $running[$phptFile]['stdout'] = null; // mark closed so the finally below skips it
                 $results[$phptFile] = \stripos($output, 'skip') === 0 ? \ltrim(\substr($output, 4)) : null;
             }
 
             return $results;
         } finally {
+            // If startSkipifProcess() throws partway through the first loop above, or the
+            // second loop throws before finishing, any process still open here (stdout !== null)
+            // was started but never drained/closed — close it too, not just its temp file.
             foreach ($running as $proc) {
+                if ($proc['stdout'] !== null) {
+                    @\fclose($proc['stdout']);
+                    @\proc_close($proc['process']);
+                }
                 @\unlink($proc['tempFile']);
             }
         }
@@ -159,7 +169,10 @@ final readonly class PsalmTest
             throw new \RuntimeException(\sprintf('Failed to write temporary SKIPIF file for %s.', $phptFile));
         }
 
-        $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        // stderr inherits the parent's (like shell_exec did), not a pipe: a closed/unread pipe
+        // means the script's first stderr write (a warning, or display_errors=stderr) raises
+        // SIGPIPE and kills it before it ever reaches its skip echo.
+        $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => \STDERR];
         $pipes = [];
         $process = \proc_open([\PHP_BINARY, $tempFile], $descriptors, $pipes);
 
@@ -170,7 +183,6 @@ final readonly class PsalmTest
         }
 
         \fclose($pipes[0]);
-        \fclose($pipes[2]);
 
         return ['tempFile' => $tempFile, 'process' => $process, 'stdout' => $pipes[1]];
     }
