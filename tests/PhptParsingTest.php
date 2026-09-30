@@ -210,10 +210,34 @@ final class PhptParsingTest extends TestCase
         // fromFile()'s one parse), this would have nothing to read.
         \unlink($file);
 
-        $result = PsalmTester::create()->withPsalm(__DIR__ . '/bin/psalm-stub')->withProgress(false)->runOne($test);
+        $result = PsalmTester::create()->withPsalm(__DIR__ . '/bin/psalm-stub')->runOne($test);
 
         self::assertSame(Outcome::Skipped, $result->outcome);
         self::assertSame('stale by now', $result->reason);
+    }
+
+    public function testFromFileAcceptsATestDescriptionSection(): void
+    {
+        $test = Phpt::fromFile($this->writePhpt("--TEST--\nnarrows array_values\n--FILE--\n<?php\n--EXPECT--\nok"));
+
+        self::assertSame('<?php', $test->code);
+        self::assertSame(4, $test->codeFirstLine);
+    }
+
+    public function testFromFileKeepsBlankAndZeroLinesVerbatim(): void
+    {
+        $test = Phpt::fromFile($this->writePhpt("--FILE--\n<?php\n--EXPECT--\n\n0\nlast"));
+
+        self::assertSame("\n0\nlast", $test->expectation->text);
+    }
+
+    public function testFromFileResolvesARelativeExternalPathAgainstThePhptDirectory(): void
+    {
+        $external = $this->writeTempFile('expected via relative path');
+        $test = Phpt::fromFile($this->writePhpt("--FILE--\n<?php\n--EXPECT_EXTERNAL--\n" . \basename($external)));
+
+        self::assertSame('expected via relative path', $test->expectation->text);
+        self::assertSame(\dirname($external) . \DIRECTORY_SEPARATOR . \basename($external), $test->expectation->externalPath);
     }
 
     private function writePhpt(string $contents): string

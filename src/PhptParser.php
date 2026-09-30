@@ -11,7 +11,8 @@ namespace AliesDev\PsalmTester;
  */
 final class PhptParser
 {
-    private const SUPPORTED = ['SKIPIF', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
+    /** TEST is php-src's description section: accepted, not used. */
+    private const SUPPORTED = ['TEST', 'SKIPIF', 'FILE', 'ARGS', 'EXPECT', 'EXPECTF', 'EXPECT_EXTERNAL', 'EXPECTF_EXTERNAL'];
 
     /** Real run-tests.php sections whose semantics psalm-tester does not implement. */
     private const NOT_SUPPORTED = ['CLEAN', 'ENV', 'INI'];
@@ -27,8 +28,10 @@ final class PhptParser
     public static function parse(string $phptFile): array
     {
         $name = null;
-        /** @var array<string, array{string, positive-int}> $sections */
-        $sections = [];
+        /** @var array<string, list<string>> $contents */
+        $contents = [];
+        /** @var array<string, positive-int> $firstLines */
+        $firstLines = [];
         $lineNumber = 0;
 
         $lines = file($phptFile, FILE_IGNORE_NEW_LINES);
@@ -54,7 +57,8 @@ final class PhptParser
                 /** @var non-empty-string widened back: $sections is keyed by string */
                 $name = $section;
 
-                $sections[$name] = ['', $lineNumber + 1];
+                $contents[$name] = [];
+                $firstLines[$name] = $lineNumber + 1;
 
                 continue;
             }
@@ -63,7 +67,12 @@ final class PhptParser
                 throw new \LogicException(\sprintf('%s must start with a section delimiter, e.g. --FILE--.', $phptFile));
             }
 
-            $sections[$name][0] .= ($sections[$name][0] ? "\n" : '') . $line;
+            $contents[$name][] = $line;
+        }
+
+        $sections = [];
+        foreach ($contents as $section => $lines) {
+            $sections[$section] = [\implode("\n", $lines), $firstLines[$section]];
         }
 
         /** @var PhptSections */

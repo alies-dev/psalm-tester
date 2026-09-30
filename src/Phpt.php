@@ -68,6 +68,11 @@ final readonly class Phpt
         foreach (['EXPECT_EXTERNAL' => ExpectationKind::Exact, 'EXPECTF_EXTERNAL' => ExpectationKind::Format] as $section => $kind) {
             if (isset($sections[$section])) {
                 $externalPath = $sections[$section][0];
+
+                if (!self::isAbsolutePath($externalPath)) {
+                    $externalPath = \dirname($path) . \DIRECTORY_SEPARATOR . $externalPath;
+                }
+
                 $contents = file_get_contents($externalPath);
 
                 if ($contents === false) {
@@ -79,5 +84,13 @@ final readonly class Phpt
         }
 
         throw new \LogicException(\sprintf('File %s must have an EXPECT* section.', $path));
+    }
+
+    /**
+     * @psalm-pure
+     */
+    private static function isAbsolutePath(string $path): bool
+    {
+        return \str_starts_with($path, '/') || \str_starts_with($path, '\\') || \preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1;
     }
 }
