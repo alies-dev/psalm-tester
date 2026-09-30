@@ -10,7 +10,13 @@ declare(strict_types=1);
 //   --stub-mode=<mode>        overrides STUB_MODE (empty: no issues at all; no_output: prints nothing)
 // STUB_STDERR: text written to stderr.
 // STUB_STDERR_BYTES: that many bytes written to stderr. STUB_POPULATE_CACHE: nested files
-// written under XDG_CACHE_HOME, as a real cache would be.
+// written under XDG_CACHE_HOME, as a real cache would be. STUB_START_MARKER: that file is
+// created the moment this process starts, before anything else (even the sleep).
+
+$startMarker = (string) \getenv('STUB_START_MARKER');
+if ($startMarker !== '') {
+    \touch($startMarker);
+}
 
 $options = [];
 foreach ($argv as $arg) {

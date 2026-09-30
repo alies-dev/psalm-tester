@@ -90,8 +90,10 @@ final class PsalmPhptTestCaseTest extends TestCase
 
     public function testTheStartLineAppearsBeforeAnyPsalmProcessStarts(): void
     {
-        // A 1s stub sleep gives a wide, unmissable window: if the line only appeared after the
-        // Psalm run finished (the bug), it would show up near the full 1s+ mark, not well under it.
+        // The stub creates $marker the instant it starts, before even its own sleep: an ordering
+        // check (does $marker exist yet when the line is first seen), not a wall-clock bound, so
+        // this cannot flake on a slow CI runner the way a fixed time budget would.
+        $marker = $this->logDir . '/started';
         $root = \dirname(__DIR__);
         $command = [
             \PHP_BINARY,
@@ -107,23 +109,23 @@ final class PsalmPhptTestCaseTest extends TestCase
         $env = \getenv();
         $env['STUB_MODE'] = 'record_contents';
         $env['STUB_CONTENTS_LOG_DIR'] = $this->logDir;
+        $env['STUB_START_MARKER'] = $marker;
         $env['STUB_SLEEP'] = '1';
 
         $pipes = [];
-        $start = \microtime(true);
         $process = \proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, $env);
         self::assertIsResource($process);
         \stream_set_blocking($pipes[1], false);
         \stream_set_blocking($pipes[2], false);
 
         $output = '';
-        $seenAfter = null;
+        $markerExistedWhenSeen = null;
 
         do {
             $output .= (string) \stream_get_contents($pipes[1]) . (string) \stream_get_contents($pipes[2]);
 
-            if ($seenAfter === null && \str_contains($output, 'psalm-tester:')) {
-                $seenAfter = \microtime(true) - $start;
+            if ($markerExistedWhenSeen === null && \str_contains($output, 'psalm-tester:')) {
+                $markerExistedWhenSeen = \file_exists($marker);
             }
 
             $running = \proc_get_status($process)['running'];
@@ -137,8 +139,8 @@ final class PsalmPhptTestCaseTest extends TestCase
         \fclose($pipes[2]);
         \proc_close($process);
 
-        self::assertNotNull($seenAfter, 'The start line never appeared.' . $output);
-        self::assertLessThan(0.5, $seenAfter, \sprintf('Start line appeared after %.2fs, not well before the 1s stub sleep.', $seenAfter));
+        self::assertNotNull($markerExistedWhenSeen, 'The start line never appeared.' . $output);
+        self::assertFalse($markerExistedWhenSeen, 'Start line appeared after the Psalm process had already started.');
     }
 
     public function testDataSetFilterSelectsANestedFileByItsRelativePath(): void
