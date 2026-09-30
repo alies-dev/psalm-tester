@@ -62,6 +62,55 @@ final class MyPsalmTest extends TestCase
 }
 ```
 
+## Running a directory of phpt files
+
+Extend `PhptTestCase` and implement `baseDir()`:
+
+```php
+<?php
+
+use AliesDev\PsalmTester\PhptTestCase;
+
+final class MyPsalmTest extends PhptTestCase
+{
+    protected static function baseDir(): string
+    {
+        return __DIR__ . '/phpt';
+    }
+}
+```
+
+Every `*.phpt` file under `baseDir()` (recursively) becomes one data set of `testPhpt`, named by its path relative to
+`baseDir()` (e.g. `sub/array_values.phpt`), in sorted order. Before the first test runs, the `--SKIPIF--` sections of
+the selected files are evaluated concurrently and the remaining files are analyzed in a single `runBatch()` call (see
+[Batch execution](#batch-execution)). A skipped file is reported via `markTestSkipped()` with its SKIPIF reason; a
+malformed file errors only its own test.
+
+Only the tests PHPUnit will run are analyzed, so `--filter` (and `--exclude-filter`, `--group`, ...) keeps a run cheap:
+
+```shell
+vendor/bin/phpunit --filter 'array_values'                  # any data set whose name matches
+vendor/bin/phpunit --filter 'testPhpt@sub/array_values.phpt' # exactly one data set
+```
+
+PHPUnit has no public API for the selected tests, so `PhptTestCase` reads them from the running test suite. If that is
+not possible (e.g. a test runs in a separate process), results stay correct, but each test is analyzed in its own Psalm
+run.
+
+Override `createTester()` to configure the tester:
+
+```php
+use AliesDev\PsalmTester\PsalmTester;
+
+protected static function createTester(): PsalmTester
+{
+    return PsalmTester::create(
+        defaultArguments: '--no-progress --no-diff --config=' . __DIR__ . '/psalm.xml',
+        timeoutSeconds: 120.0,
+    );
+}
+```
+
 ## Passing different arguments to Psalm
 
 By default `PsalmTester` runs Psalm with `--no-progress --no-diff --config=`[psalm.xml](src/psalm.xml).

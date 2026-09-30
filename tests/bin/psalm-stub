@@ -75,6 +75,18 @@ foreach (\array_slice($argv, 1) as $arg) {
     }
 }
 
+if ($mode === 'record_contents') {
+    // One JSON log per invocation listing the analyzed files' contents, so a test can tell
+    // which fixtures were analyzed (the files themselves are hash-named temp copies).
+    $logDir = (string) \getenv('STUB_CONTENTS_LOG_DIR');
+    \file_put_contents(
+        $logDir . '/' . \getmypid() . '_' . \bin2hex(\random_bytes(4)) . '.json',
+        (string) \json_encode(\array_map(static fn(string $file): string => (string) \file_get_contents($file), $files)),
+    );
+    \fwrite(\STDOUT, '[]');
+    exit(0);
+}
+
 $errors = [];
 if ($mode === 'large') {
     foreach ($files as $file) {
