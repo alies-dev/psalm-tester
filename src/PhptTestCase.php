@@ -19,14 +19,23 @@ use PHPUnit\Framework\TestSuite;
  */
 abstract class PhptTestCase extends TestCase
 {
-    private const EMPTY_STATE = ['tests' => [], 'skipReasons' => [], 'results' => [], 'errors' => []];
-
     /**
      * Keyed by concrete class: static properties are shared by every subclass of this base.
      *
      * @var array<string, array{tests: array<string, PsalmTest>, skipReasons: array<string, string>, results: array<string, string>, errors: array<string, \Throwable>}>
      */
     private static array $state = [];
+
+    /**
+     * A method, not a constant: a typed class constant needs PHP 8.3.
+     *
+     * @return array{tests: array<string, PsalmTest>, skipReasons: array<string, string>, results: array<string, string>, errors: array<string, \Throwable>}
+     * @psalm-pure
+     */
+    private static function emptyState(): array
+    {
+        return ['tests' => [], 'skipReasons' => [], 'results' => [], 'errors' => []];
+    }
 
     /**
      * Directory holding the *.phpt files, searched recursively.
@@ -46,7 +55,7 @@ abstract class PhptTestCase extends TestCase
     #[\Override]
     public static function setUpBeforeClass(): void
     {
-        self::$state[static::class] = self::EMPTY_STATE;
+        self::$state[static::class] = self::emptyState();
 
         // Unknown selection (e.g. a test run in a separate process): each test prepares itself.
         self::prepare(self::selectedRelPaths() ?? []);
@@ -77,7 +86,7 @@ abstract class PhptTestCase extends TestCase
     #[DataProvider('providePhptFiles')]
     final public function testPhpt(string $relPath): void
     {
-        $state = self::$state[static::class] ?? self::EMPTY_STATE;
+        $state = self::$state[static::class] ?? self::emptyState();
 
         if (!isset($state['tests'][$relPath]) && !isset($state['skipReasons'][$relPath]) && !isset($state['errors'][$relPath])) {
             self::$state[static::class] = $state;
