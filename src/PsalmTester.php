@@ -465,10 +465,6 @@ final readonly class PsalmTester
 
     private static function findPsalm(): string
     {
-        if (!method_exists(InstalledVersions::class, 'getInstallPath')) {
-            throw new \RuntimeException('Cannot find Psalm installation path. Pass it to withPsalm().');
-        }
-
         $installPath = InstalledVersions::getInstallPath('vimeo/psalm');
 
         if ($installPath === null) {
