@@ -1,23 +1,27 @@
 # Psalm Tester
 
-Test Psalm via phpt files!
-
 [![Latest Stable Version](https://poser.pugx.org/alies-dev/psalm-tester/v/stable.png)](https://packagist.org/packages/alies-dev/psalm-tester)
 [![Total Downloads](https://poser.pugx.org/alies-dev/psalm-tester/downloads.png)](https://packagist.org/packages/alies-dev/psalm-tester)
 [![psalm-level](https://shepherd.dev/github/alies-dev/psalm-tester/level.svg)](https://shepherd.dev/github/alies-dev/psalm-tester)
 [![type-coverage](https://shepherd.dev/github/alies-dev/psalm-tester/coverage.svg)](https://shepherd.dev/github/alies-dev/psalm-tester)
 
-## Installation
+Regression tests for what Psalm reports, written as `.phpt` files and run by PHPUnit.
+Each file holds a PHP snippet and the exact issues (or traced types) Psalm must report for it.
+It is built for authors of Psalm plugins and stubs, who need to pin inferred types and issues
+without hand-writing a PHPUnit test and a Psalm invocation per case.
 
-```shell
-composer require --dev alies-dev/psalm-tester
-```
+Changes: [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.3: [UPGRADING.md](UPGRADING.md).
 
 ## Quick start
 
-### 1. Write a test in phpt format
+```shell
+composer require --dev alies-dev/psalm-tester vimeo/psalm
+```
 
-`tests/Psalm/phpt/array_values.phpt`
+Requires PHP 8.2+ and PHPUnit 11, 12 or 13. Psalm is not a dependency of this package: install the version you test
+against (6.10+ or 7).
+
+A fixture, `tests/Psalm/phpt/array_values.phpt`:
 
 ```phpt
 --FILE--
@@ -25,260 +29,287 @@ composer require --dev alies-dev/psalm-tester
 
 /** @psalm-trace $_list */
 $_list = array_values(['a' => 1, 'b' => 2]);
-
 --EXPECT--
 Trace on line 5: $_list: non-empty-list<1|2>
 ```
 
-To avoid hardcoding error details, use `--EXPECTF--` and its format placeholders (`%s`, `%d`, ...):
-
-```phpt
---EXPECTF--
-Trace on line %d: $_list: non-empty-list<%s>
-```
-
-Lines are counted in the `.phpt` file, so an error on the first line of the `--FILE--` section above is reported as
-line 2.
-
-### 2. Add a test case
-
-`tests/Psalm/PsalmTest.php`
+A test case, `tests/Psalm/PsalmTest.php`:
 
 ```php
 <?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Psalm;
 
 use AliesDev\PsalmTester\PsalmPhptTestCase;
 
 final class PsalmTest extends PsalmPhptTestCase
 {
-    protected static function phptDirectory(): string { return __DIR__ . '/phpt'; }
+    protected static function phptDirectory(): string
+    {
+        return __DIR__ . '/phpt';
+    }
 }
 ```
 
-Every `*.phpt` file under `phptDirectory()` (recursively) becomes one data set of `testPhpt`, named by its path
-relative to that directory (e.g. `sub/array_values.phpt`), in sorted order.
-
-Override `tester()` to configure how Psalm runs, e.g. with your own `psalm.xml` (see
-[Configuring the tester](#configuring-the-tester)):
-
-```php
-use AliesDev\PsalmTester\PsalmTester;
-
-protected static function tester(): PsalmTester
-{
-    return PsalmTester::create()->withConfig(__DIR__ . '/psalm.xml');
-}
-```
-
-Before the first test runs, all selected files are handed to one `PsalmTester::run()` call: their `--SKIPIF--` scripts
-are evaluated concurrently and the remaining files are analyzed together (see [How tests run](#how-tests-run)). A
-skipped file is reported via `markTestSkipped()` with its SKIPIF reason; a malformed file errors only its own test.
-
-Only the tests PHPUnit will run are analyzed, so `--filter` (and `--exclude-filter`, `--group`, ...) keeps a run cheap:
+Every `*.phpt` file under `phptDirectory()` (recursively) becomes one data set of `testPhpt`, named by its path relative
+to that directory. Run them:
 
 ```shell
-vendor/bin/phpunit --filter 'array_values'                  # any data set whose name matches
-vendor/bin/phpunit --filter 'testPhpt@sub/array_values.phpt' # exactly one data set
+vendor/bin/phpunit tests/Psalm/PsalmTest.php
+vendor/bin/phpunit --filter array_values                  # every data set whose name matches
+vendor/bin/phpunit --filter 'testPhpt@array_values.phpt'  # exactly one data set
 ```
 
-PHPUnit has no public API for the selected tests, so `PsalmPhptTestCase` reads them from the running test suite. If that
-is not possible (e.g. a test runs in a separate process), results stay correct, but each test is analyzed in its own
-Psalm run.
+Only the selected tests are analyzed, so `--filter` also makes the Psalm run cheaper.
 
-## The phpt format
+Do not pass a directory holding fixtures to PHPUnit on the command line (`vendor/bin/phpunit tests/Psalm`): PHPUnit
+then also runs every `.phpt` file as its own PHPT test, executing the code instead of analyzing it. A `<directory>` in
+`phpunit.xml` is safe, since it collects only `*Test.php` by default.
 
-| Section | Meaning |
-|---|---|
-| `--TEST--` | Optional description; ignored. |
-| `--FILE--` | Required. The code Psalm analyzes. |
-| `--EXPECT--` | Psalm's output must be identical to this, one `<IssueType> on line <n>: <message>` line per issue. |
-| `--EXPECTF--` | Like `--EXPECT--`, with the format placeholders of PHPUnit's `assertStringMatchesFormat()`. |
-| `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--` | The path of a file holding the expectation, relative to the `.phpt` file. |
-| `--ARGS--` | Extra Psalm arguments for this test (see below). |
-| `--SKIPIF--` | A PHP script; if its output starts with `skip`, the test is skipped with the rest of that output as reason. |
-| `--XFAIL--` | A reason the test is expected to fail its expectation (see [Expected failures](#expected-failures)). |
+## Writing fixtures
 
-Any other section throws. `--CLEAN--`, `--ENV--` and `--INI--` from PHP's own phpt format are rejected with an explicit
-"not supported" message rather than silently ignored.
+The expectation is Psalm's output formatted as one `<IssueType> on line <n>: <message>` line per issue, sorted by line
+and column. Line numbers count from the top of the `.phpt` file, not from `--FILE--`. An empty expectation means "no
+issues".
 
-The SKIPIF script runs in its own PHP process (so `exit()` or `die()` in it cannot end the test run), in the tester's
-working directory and environment:
+The default config ([src/psalm.xml](src/psalm.xml)) is strict: `errorLevel="1"`, `findUnusedCode`,
+`findUnusedVariablesAndParams`, `reportMixedIssues` and more. That is why the examples name variables `$_list`: a plain
+`$list` that is never read adds an `UnusedVariable` issue. Use [your own config](#configuring-the-tester) if that is
+too strict.
+
+Assert an exact type without printing it, with [`@psalm-check-type-exact`](https://psalm.dev/docs/annotating_code/supported_annotations/):
+
+```phpt
+--FILE--
+<?php
+
+$_list = array_values(['a' => 1, 'b' => 2]);
+/** @psalm-check-type-exact $_list = non-empty-list<1|2> */
+--EXPECT--
+```
+
+Use `--EXPECTF--` where part of the output should not be pinned, e.g. a line number that shifts when the fixture is
+edited:
+
+```phpt
+--FILE--
+<?php
+
+echo str_repeat('-', '3');
+--EXPECTF--
+InvalidScalarArgument on line %d: Argument 2 of str_repeat expects int, but '3' provided
+```
+
+Skip a fixture on an environment condition:
 
 ```phpt
 --SKIPIF--
-<?php if (PHP_VERSION_ID < 80400) { echo 'skip requires PHP 8.4+'; }
+<?php if (PHP_VERSION_ID < 80400) { echo 'skip requires PHP 8.4'; }
+--FILE--
+<?php
+
+/** @psalm-trace $_list */
+$_list = array_values(['a' => 1, 'b' => 2]);
+--EXPECT--
+Trace on line 7: $_list: non-empty-list<1|2>
 ```
 
-### Psalm arguments
-
-Psalm is started without a shell. Its arguments are the tester's (default `--no-progress --no-diff`), then
-`--config=<the configured psalm.xml>`, then the test's `--ARGS--`, split into words like a shell would (quotes and
-backslashes work, a backslash at the end of a line continues it, nothing is expanded). A config option (`--config=x`, `--config x` or `-c x`) in the test's
-`--ARGS--` replaces whatever config would otherwise be used, including one already set in the tester's own
-arguments (`withArguments('--config=...')`), so Psalm never sees two `--config` options:
+Run one fixture with a different Psalm config (a relative path resolves against the working directory):
 
 ```phpt
 --ARGS--
---config=tests/Psalm/psalm-strict.xml --taint-analysis
+--config=tests/Psalm/psalm-lenient.xml
 --FILE--
-...
+<?php
+
+$list = array_values(['a' => 1, 'b' => 2]);
+--EXPECT--
 ```
 
-psalm-tester passes the files to analyze itself, so arguments that would change them are rejected: `-f` (also as
-`-fX` or clustered, e.g. `-mf`) and anything Psalm would read as a path (a word that is not the value of `-c`, `-r`,
-`--config`, `--printer` or `--root`; `-` for stdin). `withArguments()` throws for them; in `--ARGS--` they, like a
-malformed `--ARGS--` (e.g. an unterminated quote), give only that test `Outcome::Error`.
+Here `tests/Psalm/psalm-lenient.xml` sets `findUnusedCode="false"`, so the unused `$list` is not reported.
+
+Document a known wrong result instead of hiding it. The test reports as incomplete while the output mismatches, and
+fails once it matches, so the stale `--XFAIL--` gets removed:
+
+```phpt
+--XFAIL--
+Psalm does not evaluate explode() on literal strings
+--FILE--
+<?php
+
+/** @psalm-trace $_parts */
+$_parts = explode(',', 'a,b');
+--EXPECT--
+Trace on line 7: $_parts: list{'a', 'b'}
+```
+
+All fixtures that share the same arguments are analyzed in one Psalm run and share one symbol table. Keep class and
+function names unique across them, otherwise Psalm reports `DuplicateClass` or `DuplicateFunction`.
+
+## Supported phpt sections
+
+The format comes from php-src: [phpt file layout](https://qa.php.net/phpt_details.php),
+[writing tests](https://php.github.io/php-src/miscellaneous/writing-tests.html),
+[run-tests.php](https://github.com/php/php-src/blob/master/run-tests.php). psalm-tester supports a subset and gives
+some sections a Psalm meaning:
+
+| Section | In psalm-tester |
+|---|---|
+| `--TEST--` | Optional description, ignored. |
+| `--FILE--` | Required. Code that Psalm analyzes; it is never executed. |
+| `--EXPECT--` | Compared byte for byte with the formatted output. Unlike php-src, neither side is trimmed: a blank line after the last issue is part of the expectation. |
+| `--EXPECTF--` | Matched with PHPUnit's [`assertStringMatchesFormat()`](https://docs.phpunit.de/en/11.5/assertions.html#assertstringmatchesformat) placeholders (`%d`, `%s`, `%a`, ...), run by PHPUnit rather than php-src's `run-tests.php`. |
+| `--EXPECT_EXTERNAL--`, `--EXPECTF_EXTERNAL--` | Path of a file holding the expectation, relative to the `.phpt` file. |
+| `--ARGS--` | Psalm CLI arguments (php-src: arguments for the script). See [Psalm arguments](#psalm-arguments). |
+| `--SKIPIF--` | PHP script run in its own process, in the tester's working directory and environment. Output starting with `skip` (case insensitive) skips the test with the rest as reason. php-src's `xfail`, `warn` and `info` prefixes are not recognized. |
+| `--XFAIL--` | Reason the output is expected to mismatch. Mismatch: PHPUnit incomplete. Match: PHPUnit failure (php-src only warns). |
+
+`--CLEAN--`, `--ENV--` and `--INI--` throw "not supported by psalm-tester". Any other section (`--POST--`,
+`--EXTENSIONS--`, `--FILE_EXTERNAL--`, `--EXPECTREGEX--`, ...) throws "Unknown section", and a repeated section throws
+"Duplicate section". A malformed file errors only its own test.
+
+### Psalm arguments
+
+Psalm runs without a shell, with these arguments in order:
+
+1. the tester's arguments (default `--no-progress --no-diff`, see `withArguments()`);
+2. `--config=<withConfig() path>`, unless step 1 already has a config option;
+3. the fixture's `--ARGS--`, split into words like a shell would (quotes and backslashes work, a trailing backslash
+   continues the line, nothing is expanded).
+
+A config option in `--ARGS--` (`--config=x`, `--config x`, `-c x`) replaces the one from steps 1 and 2, so Psalm never
+sees two. The tester passes the files to analyze itself, so `-f` and anything Psalm would read as a path are rejected:
+`withArguments()` throws, and a fixture with such `--ARGS--` (or an unterminated quote) errors only its own test. The
+tester also adds `--output-format=json` and `--no-cache`.
 
 ## Configuring the tester
 
-`PsalmTester::create()` takes no parameters; each `with*()` method returns a configured copy.
+Override `tester()` in the test case (importing `AliesDev\PsalmTester\PsalmTester`). Every `with*()` method returns
+a configured copy:
+
+```php
+protected static function tester(): PsalmTester
+{
+    return PsalmTester::create()
+        ->withConfig(__DIR__ . '/psalm.xml')
+        ->withTimeout(120.0);
+}
+```
+
+A plugin author's `tests/Psalm/psalm.xml` needs no `<projectFiles>`, since the tester passes the files:
+
+```xml
+<?xml version="1.0"?>
+<psalm
+    errorLevel="1"
+    findUnusedCode="false"
+    xmlns="https://getpsalm.org/schema/config"
+>
+    <plugins>
+        <pluginClass class="Psalm\PhpUnitPlugin\Plugin"/>
+    </plugins>
+</psalm>
+```
 
 | Method | Default |
 |---|---|
 | `withPsalm(string $binary)` | the `vimeo/psalm` binary installed via Composer |
-| `withConfig(string $psalmXml)` | the minimal [psalm.xml](src/psalm.xml) shipped with this package |
-| `withArguments(string ...$args)` | `'--no-progress', '--no-diff'`; one argument per parameter |
-| `withTimeout(?float $seconds)` | `null` (no timeout) |
-| `withConcurrency(int $n)` | one per CPU core; bounds SKIPIF scripts and Psalm runs |
+| `withConfig(string $psalmXml)` | the strict [src/psalm.xml](src/psalm.xml) |
+| `withArguments(string ...$args)` | `'--no-progress', '--no-diff'`; one argument per parameter, replaces the default |
+| `withTimeout(?float $seconds)` | `null`, no timeout |
+| `withConcurrency(int $n)` | one per CPU core; bounds concurrent SKIPIF scripts and concurrent Psalm runs |
 | `withWorkingDirectory(string $dir)` | the current one; relative `--config` paths resolve against it |
-| `withEnv(array $env)` | none; extra variables for Psalm and SKIPIF processes (not `XDG_CACHE_HOME`, `TMPDIR`, `TMP`, `TEMP`, see below) |
+| `withEnv(array $env)` | none; extra variables for Psalm and SKIPIF processes (not `XDG_CACHE_HOME`, `TMPDIR`, `TMP`, `TEMP`) |
+| `withTemporaryDirectory(string $dir)` | `<system temp dir>/psalm_test` |
 | `withProgress(bool $on)` | `false`; `true` prints one `<arguments>: <n> tests` line per Psalm run on STDERR, which PHPUnit's `--process-isolation` treats as an error |
-| `withTemporaryDirectory(string $dir)` | `<system temp dir>/psalm_test`; a relative path is resolved against the current directory |
-| `withUpdate(bool $on)` | the env var `PSALM_TESTER_UPDATE` (`1` or `true`, case-insensitive) |
+| `withUpdate(bool $on)` | env var `PSALM_TESTER_UPDATE` (`1` or `true`); see [Update mode](#update-mode) |
 
-## Using the tester directly
+## Using PsalmTester directly
 
 `PsalmPhptTestCase` is a thin layer over `PsalmTester::run()`, which takes any iterable of `Phpt` and returns one
-`Result` per test, with the same keys and order:
+`Result` per entry, with the same keys:
 
 ```php
-use AliesDev\PsalmTester\Outcome;
+<?php
+
+declare(strict_types=1);
+
+use AliesDev\PsalmTester\Expectation;
 use AliesDev\PsalmTester\Phpt;
 use AliesDev\PsalmTester\PsalmTester;
 
+require __DIR__ . '/vendor/autoload.php';
+
 $results = PsalmTester::create()->run([
-    'values' => Phpt::fromFile(__DIR__ . '/array_values.phpt'),
+    'from file' => Phpt::fromFile(__DIR__ . '/tests/Psalm/phpt/array_values.phpt'),
+    'in code' => new Phpt(
+        code: "<?php\necho str_repeat('-', '3');",
+        expectation: Expectation::exact(''),
+    ),
 ]);
 
-$result = $results['values'];
-$result->outcome;  // Outcome::Passed, Failed, Skipped or Error
-$result->output;   // "Trace on line 5: $_list: non-empty-list<1|2>"
-$result->issues;   // list<Issue>, each with type, line, column and message
-$result->reason;   // why it was skipped or errored, else null
-$result->assert(); // report it to PHPUnit: assertion with diff, skip, or failure
+foreach ($results as $name => $result) {
+    printf("%s: %s\n%s\n", $name, $result->outcome->name, $result->output);
+
+    foreach ($result->issues as $issue) {
+        printf("  %s at %d:%d\n", $issue->type, $issue->line, $issue->column);
+    }
+}
 ```
 
-`runOne(Phpt $phpt): Result` runs a single test the same way. `new Phpt(code: ..., expectation: Expectation::exact(...))`
-builds a test in code instead of from a file.
+```
+from file: Passed
+Trace on line 5: $_list: non-empty-list<1|2>
+  Trace at 5:1
+in code: Failed
+InvalidScalarArgument on line 2: Argument 2 of str_repeat expects int, but '3' provided
+  InvalidScalarArgument at 2:22
+```
 
-`Outcome::XFailed` and `Outcome::XPassed` come from a test's `--XFAIL--` section, see
-[Expected failures](#expected-failures).
+`runOne(Phpt $phpt)` runs a single test. `$result->reason` explains a skip or an error, and `$result->assert()` reports
+the result to PHPUnit:
+
+| `Outcome` | `assert()` |
+|---|---|
+| `Passed`, `Failed` | assertion on the output, with a diff on failure |
+| `Skipped` | `markTestSkipped()` with the SKIPIF reason |
+| `XFailed` | `markTestIncomplete()` with the `--XFAIL--` reason |
+| `XPassed` | failure asking to remove `--XFAIL--` |
+| `Updated` | passes (see [Update mode](#update-mode)) |
+| `Error` | failure with the reason |
 
 ## How tests run
 
-`run()` evaluates all SKIPIF scripts first, then analyzes the remaining tests with **one Psalm run per distinct argument
-set** instead of one per file, so a plugin with an expensive boot (e.g. one that boots a Laravel application) pays it
-once per argument set. Up to `withConcurrency()` Psalm runs go at once; the rest wait for a free slot.
-
-`run()` returns exactly one `Result` per test. A Psalm run that exits with a status other than 0 or 2 (Psalm's "no
-issues" and "issues found") or is killed by a signal, whose output is not Psalm's JSON issue list, or that reports issues
-in files other than the tested code (e.g. an included file) gives `Outcome::Error` to each of its tests, with the reason;
-clean looking output does not rescue a crashed run. SKIPIF scripts follow php-src's `run-tests.php` instead: only their
-output decides. `run()` throws only when the tester itself fails (e.g. it cannot write a temporary file), and then kills
-the Psalm runs still going first. Duplicate keys in the input are rejected.
-
-> **Important:** all files of one argument set are analyzed in a single Psalm run, so they share a global symbol table.
-> Keep class and function names unique across `.phpt` files with the same arguments, otherwise Psalm reports
-> `DuplicateClass` / `DuplicateFunction` errors.
-
-Each Psalm run gets its own empty cache directory (`XDG_CACHE_HOME`, `TMPDIR`, `TMP` and `TEMP` point at it) and
-`--no-cache` unless its arguments already contain it: that cache would be thrown away after the run, and writing it
-roughly doubled the wall time of a 700 file suite.
-
-With `withTimeout($seconds)`, a Psalm run still going `$seconds` after it started (time spent waiting for a free slot
-does not count) is killed together with its child processes, and each of its tests gets `Outcome::Error` naming the
-arguments and the timeout. Other runs are unaffected.
-
-## Expected failures
-
-A `--XFAIL--` section (php-src semantics) documents a known, currently-unfixed mismatch instead of
-hiding it behind a green suite:
-
-```phpt
---XFAIL--
-known limitation: see #123, Psalm cannot narrow this yet
---FILE--
-<?php
-...
---EXPECT--
-...
-```
-
-While the actual output still mismatches the expectation, the test is `Outcome::XFailed` and
-`assert()` reports it `markTestIncomplete()` with the `--XFAIL--` reason: visible in the run
-summary, but not a failure. Once the underlying issue is fixed and the output starts matching, the
-test becomes `Outcome::XPassed` and `assert()` fails with a message naming the file and telling you
-to remove the now-stale `--XFAIL--` section, so a fix doesn't silently stay undocumented.
-
-`--XFAIL--` replaces naming a fixture `*KnownLimitation.phpt`: that convention only documented
-intent in the filename, and stayed green forever even after the limitation was fixed. `--XFAIL--`
-tests are never rewritten by [update mode](#update-mode).
+- `PsalmPhptTestCase` hands every selected fixture to one `run()` call before the first test. It reads the selection
+  from the running PHPUnit suite; when it cannot (e.g. a test in a separate process), each test runs on its own, with
+  the same results.
+- SKIPIF scripts run first, concurrently. Only their output decides, as in php-src.
+- The remaining fixtures are analyzed with one Psalm run per distinct argument set, so an expensive plugin boot is paid
+  once per set. Up to `withConcurrency()` runs go at once.
+- Each run gets `--no-cache` and its own empty cache directory (`XDG_CACHE_HOME`, `TMPDIR`, `TMP`, `TEMP`).
+- A run that crashes, exits with a status other than 0 or 2, prints something other than Psalm's JSON issue list,
+  reports issues in other files, or exceeds `withTimeout()` gives `Outcome::Error` to each of its tests. It never
+  passes. Other runs are unaffected.
+- `run()` throws only when the tester itself fails (e.g. it cannot write a temporary file), after killing the runs
+  still going.
 
 ## Update mode
 
-With `withUpdate(true)` (or the env var `PSALM_TESTER_UPDATE=1`, e.g. `PSALM_TESTER_UPDATE=1 vendor/bin/phpunit`),
-`run()` rewrites a `Failed` test's `--EXPECT--` section with the actual output and reports it as `Outcome::Updated`
-(`assert()` passes). Only the lines the parser reads as the expectation are replaced; headers (including trailing
-text), other sections, line endings and whether the file ends with a newline are kept. The file is written to a
-temporary file in the same directory and renamed over the original, keeping its permissions. A symlinked test is
-rewritten at its target, so the link stays a link.
+`PSALM_TESTER_UPDATE=1 vendor/bin/phpunit` (or `withUpdate(true)`) rewrites the `--EXPECT--` section of each failing
+test with the actual output and reports it as `Outcome::Updated`. The rewrite is atomic, keeps every other byte of
+the file, and follows symlinks. Starting from an empty `--EXPECT--`:
 
-A test stays `Outcome::Failed`, with `not updated: <path> (<why>)` as its reason and in its failure message, when it
-cannot be rewritten safely: `--EXPECTF--`, `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` tests (a format string or
-an external file has no single "actual output" to substitute), [`--XFAIL--`](#expected-failures) tests (these stay
-`Outcome::XFailed` with their own reason when they fail as expected), output with a line that
-would read as a section header, a file that changed since it was parsed (`changed during the run`: an edit made while
-Psalm ran is never overwritten, and the output described the old code anyway), or a file the rewriter cannot place
-(e.g. a second `--EXPECT--` section). The same file listed twice in one run is written once. Such a failure affects only that file; the rest of the run continues.
+```phpt
+--FILE--
+<?php
 
-With `withProgress(true)`, each `updated: <path>` and `not updated: ...` line is also printed on STDERR. Without it
-update mode prints nothing, so it works under PHPUnit's `--process-isolation`.
+/** @psalm-trace $_list */
+$_list = array_values(['a' => 1, 'b' => 2]);
+--EXPECT--
+Trace on line 5: $_list: non-empty-list<1|2>
+```
 
-## Changelog
-
-### 0.4.0
-
-* **Faster suites.** `--SKIPIF--` scripts run concurrently; Psalm runs go through a bounded process runner (no pipes,
-  no shell, one run per argument set, `withConcurrency()`); each run gets `--no-cache` and its own cache directory.
-  psalm-plugin-laravel's type suite (758 phpt files) went from 28.6s to about 10s wall time with `PsalmPhptTestCase`,
-  and about 4.6s with `--filter` on one test.
-* **`PsalmPhptTestCase`**: implement `phptDirectory()` and get discovery, SKIPIF, one batched run and PHPUnit
-  `--filter` narrowing (only the selected files are analyzed).
-* **New API**: `Phpt`, `Expectation`, `PsalmTester::create()` with `with*()` methods, `run()` / `runOne()` returning
-  `Result` with an `Outcome`, the formatted output and structured `Issue`s. See the upgrading guide below.
-* **Update mode** (`withUpdate(true)` or `PSALM_TESTER_UPDATE=1`) rewrites `--EXPECT--` sections in place, atomically.
-* **`--XFAIL--`** marks expected failures: they report as incomplete, and as a failure once they pass.
-* **`withTimeout()`** kills a hung Psalm run with its child processes and reports its tests as errors.
-* Crashed runs, unexpected exit statuses, output that is not an issue list and issues in other files are errors,
-  never passes.
-
-## Upgrading from 0.3
-
-| 0.3 | 0.4 |
-|---|---|
-| `PsalmTest` | `Phpt` |
-| `PsalmTest::fromPhptFile($file)` | `Phpt::fromFile($file)` |
-| `new PsalmTest($code, $constraint, $arguments, $codeFirstLine)` | `new Phpt($code, $expectation, $arguments, $codeFirstLine)`, with `Expectation::exact()` / `Expectation::format()` instead of a PHPUnit constraint |
-| `PsalmTest::$constraint` | `Phpt::$expectation`, a value object; `$expectation->constraint()` builds the constraint |
-| `PsalmTest::getSkipReason($file)` | removed: `run()` evaluates `--SKIPIF--` (concurrently) and reports `Outcome::Skipped` with the reason |
-| `PsalmTester::create($psalmPath, $defaultArguments, $temporaryDirectory, $showProgress)` | `PsalmTester::create()` plus `withPsalm()`, `withArguments()` / `withConfig()`, `withTemporaryDirectory()`, `withProgress()` |
-| `defaultArguments` including `--config=...` | `withConfig()` for the config and `withArguments()` for the rest, or keep `--config=...` in `withArguments()` |
-| `--ARGS--` replaced the default arguments | `--ARGS--` is appended to the configured arguments; its `--config` replaces the configured config. Files repeating the full defaults keep working. |
-| `$tester->runBatch($tests)` returning output strings, throwing on undecodable Psalm output | `$tester->run($phpts)` returning `Result` objects (`$result->output` is the old string); undecodable output becomes `Outcome::Error` |
-| `showProgress: true` by default | progress is off by default; `withProgress(true)` |
-| `--ARGS--` and `defaultArguments` went through a shell | no shell: `withArguments()` takes one argument per parameter, `--ARGS--` is split into words |
-| `*_EXTERNAL` paths relative to the current directory | relative to the `.phpt` file |
-| `$tester->test($test)` | `$tester->runOne($phpt)->assert()` |
-| a hand-written `TestCase` with discovery, a data provider and `runBatch()` | `PsalmPhptTestCase` (see [Quick start](#quick-start)) |
-| unknown sections threw `Section X is not supported.` | still throw, naming the file; `--CLEAN--`, `--ENV--`, `--INI--` get a "not supported by psalm-tester" message |
-| a repeated section silently replaced the earlier one | a repeated section throws `Duplicate section --X--` |
+Some tests stay `Failed` with a `not updated: <path> (<why>)` reason: `--EXPECTF--`, `*_EXTERNAL` and `--XFAIL--`
+tests, output containing a line that reads as a section header, and files changed while Psalm ran.
