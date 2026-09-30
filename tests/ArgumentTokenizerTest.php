@@ -23,6 +23,9 @@ final class ArgumentTokenizerTest extends TestCase
         yield 'quotes join adjacent text' => ['--report="prefix --config=x.json"', ['--report=prefix --config=x.json']];
         yield 'empty quoted token' => ["'' \"\"", ['', '']];
         yield 'backslash escapes outside quotes' => ['two\\ words \\"q', ['two words', '"q']];
+        yield 'backslash-newline continues the line' => ["--no-progress \\\n    --taint-analysis", ['--no-progress', '--taint-analysis']];
+        yield 'backslash-newline inside a word joins it' => ["--con\\\nfig=x", ['--config=x']];
+        yield 'backslash-newline inside double quotes' => ["\"a\\\nb\"", ['ab']];
     }
 
     /**
