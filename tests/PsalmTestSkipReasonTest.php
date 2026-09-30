@@ -132,25 +132,30 @@ final class PsalmTestSkipReasonTest extends TestCase
 
     public function testGetSkipReasonsRunsWithinBoundedConcurrency(): void
     {
+        $log = \tempnam(\sys_get_temp_dir(), 'psalm_tester_skipif_peak_');
+        self::assertNotFalse($log);
+        $this->tempFiles[] = $log;
+        // Each script logs +1 on start and -1 on exit; the running sum's maximum is the peak.
+        // Structural rather than a wall-time bound, which flakes on a loaded CI runner.
+        $script = \sprintf(
+            '<?php file_put_contents(%1$s, "+1\n", FILE_APPEND | LOCK_EX); usleep(200000); file_put_contents(%1$s, "-1\n", FILE_APPEND | LOCK_EX);',
+            \var_export($log, true),
+        );
         $files = [];
-        for ($i = 0; $i < 4; $i++) {
-            $files[] = $this->writePhpt(<<<'PHPT'
-                    --SKIPIF--
-                    <?php usleep(300000);
-                    --FILE--
-                    <?php
-                    --EXPECT--
-                    PHPT);
+        for ($i = 0; $i < 6; $i++) {
+            $files[] = $this->writePhpt("--SKIPIF--\n{$script}\n--FILE--\n<?php\n--EXPECT--\n");
         }
 
-        $start = \microtime(true);
         $reasons = PsalmTest::getSkipReasons($files, concurrency: 2);
-        $elapsed = \microtime(true) - $start;
 
-        self::assertSame([null, null, null, null], \array_values($reasons));
-        // 4 files at concurrency=2 means 2 sequential batches of ~0.3s each;
-        // serial execution would take ~1.2s, so this bounds it well below that.
-        self::assertLessThan(0.9, $elapsed, \sprintf('Expected roughly 2 concurrent batches (~0.6s), got %.2fs.', $elapsed));
+        self::assertSame(\array_fill(0, 6, null), \array_values($reasons));
+        $running = 0;
+        $peak = 0;
+        foreach (\file($log, \FILE_IGNORE_NEW_LINES) ?: [] as $delta) {
+            $running += (int) $delta;
+            $peak = \max($peak, $running);
+        }
+        self::assertSame(2, $peak);
     }
 
     public function testGetSkipReasonsRejectsNonPositiveConcurrency(): void
