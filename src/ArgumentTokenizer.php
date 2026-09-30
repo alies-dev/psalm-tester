@@ -11,13 +11,11 @@ namespace AliesDev\PsalmTester;
  * quotes is a line continuation. No expansion of any kind.
  *
  * @internal
- * @psalm-immutable
  */
 final class ArgumentTokenizer
 {
     /**
      * @return list<string>
-     * @psalm-pure
      */
     public static function tokenize(string $arguments): array
     {

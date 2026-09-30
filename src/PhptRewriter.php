@@ -66,10 +66,6 @@ final class PhptRewriter
         $rewritten = \implode('', \array_slice($lines, 0, $start - 1)) . $header . $body . \implode('', \array_slice($lines, $end));
         self::writeAtomically($target, $rewritten, $sourceHash);
     }
-
-    /**
-     * @psalm-pure
-     */
     private static function lineEnding(string $line): ?string
     {
         if (\str_ends_with($line, "\r\n")) {

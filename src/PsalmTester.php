@@ -18,7 +18,6 @@ final readonly class PsalmTester
 {
     /**
      * @param Options $options
-     * @psalm-mutation-free
      */
     private function __construct(private array $options) {}
 
@@ -26,7 +25,6 @@ final readonly class PsalmTester
      * Defaults: the vimeo/psalm binary installed via Composer, the bundled psalm.xml,
      * --no-progress --no-diff, no timeout, one process per CPU core, no progress output.
      *
-     * @psalm-pure
      */
     public static function create(): self
     {
@@ -45,8 +43,6 @@ final readonly class PsalmTester
             'update' => null,
         ]);
     }
-
-    /** @psalm-mutation-free */
     public function withPsalm(string $binary): self
     {
         return new self(['psalm' => $binary] + $this->options);
@@ -55,7 +51,6 @@ final readonly class PsalmTester
     /**
      * Passed as --config=, unless withArguments() or a test's --ARGS-- has a --config or -c.
      *
-     * @psalm-mutation-free
      */
     public function withConfig(string $psalmXml): self
     {
@@ -67,7 +62,6 @@ final readonly class PsalmTester
      * --no-progress --no-diff. A test's --ARGS-- are appended to them.
      *
      * @throws \InvalidArgumentException for -f or a path: the tester passes the files to analyze itself
-     * @psalm-mutation-free
      */
     public function withArguments(string ...$args): self
     {
@@ -81,7 +75,6 @@ final readonly class PsalmTester
      * Kills a Psalm run (with its process tree) still running $seconds after it started; its
      * tests get Outcome::Error. Null means no timeout.
      *
-     * @psalm-mutation-free
      */
     public function withTimeout(?float $seconds): self
     {
@@ -91,7 +84,6 @@ final readonly class PsalmTester
     /**
      * How many SKIPIF scripts, and separately how many Psalm runs, may run at once.
      *
-     * @psalm-mutation-free
      */
     public function withConcurrency(int $n): self
     {
@@ -105,7 +97,6 @@ final readonly class PsalmTester
     /**
      * Working directory of Psalm and SKIPIF processes; relative --config paths resolve against it.
      *
-     * @psalm-mutation-free
      */
     public function withWorkingDirectory(string $dir): self
     {
@@ -117,7 +108,6 @@ final readonly class PsalmTester
      * XDG_CACHE_HOME, TMPDIR, TMP and TEMP cannot be set for Psalm: each run gets its own.
      *
      * @param array<string, string> $env
-     * @psalm-mutation-free
      */
     public function withEnv(array $env): self
     {
@@ -127,7 +117,6 @@ final readonly class PsalmTester
     /**
      * Whether to print one "<arguments>: <n> tests" line per Psalm run on STDERR (default off).
      *
-     * @psalm-mutation-free
      */
     public function withProgress(bool $on): self
     {
@@ -152,7 +141,6 @@ final readonly class PsalmTester
      * tests (reported on STDERR as "not updated: <path> (<reason>)" instead). Default: the env
      * var PSALM_TESTER_UPDATE ("1" or "true", case-insensitive).
      *
-     * @psalm-mutation-free
      */
     public function withUpdate(bool $on): self
     {
@@ -223,7 +211,6 @@ final readonly class PsalmTester
     }
 
     /**
-     * @psalm-pure This reads an env var via getenv(), so it is not truly pure; the annotation is
      *     required only because Psalm's impure-function list omits getenv() (like PhptParser's
      *     file() call), so Psalm would otherwise report MissingPureAnnotation.
      */
@@ -252,14 +239,12 @@ final readonly class PsalmTester
             try {
                 // The same file twice in one run (e.g. under two keys): write it once; the second
                 // would otherwise see its own earlier rewrite as a change during the run.
-                $realPath = \realpath($phpt->path);
-                $earlier = $realPath === false ? null : ($rewritten[$realPath] ?? null);
+                $realPath = (string) \realpath($phpt->path);
+                $earlier = $rewritten[$realPath] ?? null;
 
                 if ($earlier === null) {
                     PhptRewriter::rewriteExpect($phpt->path, $result->output, $phpt->sourceHash);
-                    if ($realPath !== false) {
-                        $rewritten[$realPath] = $result->output;
-                    }
+                    $rewritten[$realPath] = $result->output;
                 } elseif ($earlier !== $result->output) {
                     throw new \RuntimeException('rewritten earlier in this run with a different output');
                 }
@@ -289,9 +274,6 @@ final readonly class PsalmTester
         }
     }
 
-    /**
-     * @psalm-mutation-free
-     */
     private static function updateIneligibleReason(Phpt $phpt): ?string
     {
         if ($phpt->xfail !== null) {
@@ -468,7 +450,6 @@ final readonly class PsalmTester
      * one), so Psalm never sees two --config options ("Too many config files provided").
      *
      * @return list<string>
-     * @psalm-mutation-free
      */
     private function effectiveArguments(Phpt $phpt): array
     {
@@ -493,7 +474,6 @@ final readonly class PsalmTester
      *
      * @param list<string> $args
      * @throws \InvalidArgumentException
-     * @psalm-pure
      */
     private static function assertNoAnalysisTargets(array $args): void
     {
@@ -532,7 +512,6 @@ final readonly class PsalmTester
 
     /**
      * @param list<string> $args
-     * @psalm-pure
      */
     private static function hasConfigOption(array $args): bool
     {
@@ -548,7 +527,6 @@ final readonly class PsalmTester
     /**
      * @param list<string> $args
      * @return list<string>
-     * @psalm-pure
      */
     private static function stripConfigOption(array $args): array
     {
@@ -652,10 +630,6 @@ final readonly class PsalmTester
 
     private static function removeDirectoryRecursive(string $dir): void
     {
-        if (!\is_dir($dir)) {
-            return;
-        }
-
         // Best-effort cleanup: this runs from analyze()'s finally, so an iterator
         // failure here must not mask the original exception.
         try {

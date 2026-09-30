@@ -14,7 +14,6 @@ final readonly class Result
     /**
      * @internal build Results with fromAnalysis(), skipped() or error(), which keep outcome and output consistent
      * @param list<Issue> $issues
-     * @psalm-mutation-free
      */
     public function __construct(
         public Phpt $phpt,
@@ -41,7 +40,6 @@ final readonly class Result
 
     /**
      * @internal
-     * @psalm-pure
      */
     public static function skipped(Phpt $phpt, string $reason): self
     {
@@ -50,7 +48,6 @@ final readonly class Result
 
     /**
      * @internal
-     * @psalm-pure
      */
     public static function error(Phpt $phpt, string $reason): self
     {

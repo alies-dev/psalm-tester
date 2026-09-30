@@ -6,7 +6,6 @@ namespace AliesDev\PsalmTester;
 
 /**
  * @internal
- * @psalm-immutable
  * @psalm-type PhptSections = array<non-empty-string, array{string, positive-int}>
  */
 final class PhptParser
@@ -21,7 +20,6 @@ final class PhptParser
      * Section name => [content, line number of the content's first line].
      *
      * @return PhptSections
-     * @psalm-pure
      */
     public static function parseSource(string $raw, string $phptFile): array
     {
@@ -29,8 +27,8 @@ final class PhptParser
         $sections = [];
 
         foreach ($bounds as $name => ['start' => $start, 'end' => $end]) {
-            $body = \array_map(self::stripEol(...), \array_slice($lines, $start, $end - $start));
-            $sections[$name] = [\implode("\n", $body), $start + 1];
+            $body = \implode('', \array_slice($lines, $start, $end - $start));
+            $sections[$name] = [(string) \preg_replace(['/\r\n/', '/\n\z/'], ["\n", ''], $body), $start + 1];
         }
 
         /** @var PhptSections */
@@ -43,7 +41,6 @@ final class PhptParser
      * $lines[start] .. $lines[end - 1], right after its header line $lines[start - 1].
      *
      * @return array{lines: list<string>, sections: array<non-empty-string, array{start: int, end: int}>}
-     * @psalm-pure
      */
     public static function scan(string $raw, string $phptFile): array
     {
@@ -96,23 +93,5 @@ final class PhptParser
         }
 
         return ['lines' => $lines, 'sections' => $sections];
-    }
-
-    /**
-     * Drops a line's "\n" or "\r\n", as file(..., FILE_IGNORE_NEW_LINES) did.
-     *
-     * @psalm-pure
-     */
-    public static function stripEol(string $line): string
-    {
-        if (\str_ends_with($line, "\n")) {
-            $line = \substr($line, 0, -1);
-
-            if (\str_ends_with($line, "\r")) {
-                $line = \substr($line, 0, -1);
-            }
-        }
-
-        return $line;
     }
 }

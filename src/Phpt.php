@@ -21,7 +21,6 @@ final readonly class Phpt
      * @param string $path the .phpt file this was parsed from ('' when built in code)
      * @param ?string $sourceHash sha1 of the bytes parsed, so update mode can tell whether the
      *     file changed since (null when built in code)
-     * @psalm-mutation-free
      */
     public function __construct(
         public string $code,
@@ -96,10 +95,6 @@ final readonly class Phpt
 
         throw new \LogicException(\sprintf('File %s must have an EXPECT* section.', $path));
     }
-
-    /**
-     * @psalm-pure
-     */
     private static function isAbsolutePath(string $path): bool
     {
         return \str_starts_with($path, '/') || \str_starts_with($path, '\\') || \preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1;
