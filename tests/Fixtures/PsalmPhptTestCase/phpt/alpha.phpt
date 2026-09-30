@@ -1,0 +1,3 @@
+--FILE--
+<?php // alpha
+--EXPECT--
