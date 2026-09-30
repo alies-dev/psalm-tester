@@ -61,7 +61,12 @@ final readonly class Result
     public function assert(): void
     {
         match ($this->outcome) {
-            Outcome::Passed, Outcome::Failed => Assert::assertThat($this->output, $this->phpt->expectation->constraint(), (string) $this->reason),
+            Outcome::Passed => Assert::assertThat($this->output, $this->phpt->expectation->constraint(), (string) $this->reason),
+            Outcome::Failed => Assert::assertThat(
+                $this->output,
+                $this->phpt->expectation->constraint(),
+                FailureReport::build($this->phpt->expectation, $this->issues, $this->phpt->code, $this->phpt->codeFirstLine) ?? '',
+            ),
             Outcome::Skipped => Assert::markTestSkipped((string) $this->reason),
             Outcome::XFailed => Assert::markTestIncomplete((string) $this->reason),
             Outcome::XPassed => Assert::fail(\sprintf('XPASS: %s now matches its expectation; remove --XFAIL-- (%s)', $this->phpt->path !== '' ? $this->phpt->path : '(in-code test)', (string) $this->reason)),
