@@ -31,9 +31,14 @@ final readonly class PsalmTest
         public Constraint $constraint,
         public string $arguments = '',
         public int $codeFirstLine = 1,
+        public ?string $skipifScript = null,
     ) {}
 
     /**
+     * Populates $skipifScript (if the file has a --SKIPIF-- section) from the same parse as
+     * everything else, so a caller that also needs the skip decision can get it via
+     * getSkipReasonsForTests() without this file being read from disk a second time.
+     *
      * @see https://qa.php.net/phpt_details.php
      */
     public static function fromPhptFile(string $phptFile): self
@@ -49,6 +54,7 @@ final readonly class PsalmTest
             constraint: self::resolvePhptConstraint($phptFile, $sections),
             arguments: $sections[self::ARGS][0] ?? '',
             codeFirstLine: $sections[self::FILE][1],
+            skipifScript: $sections[self::SKIPIF][0] ?? null,
         );
     }
 
@@ -84,11 +90,7 @@ final readonly class PsalmTest
      */
     public static function getSkipReasons(array $phptFiles, ?int $concurrency = null): array
     {
-        $concurrency ??= self::detectCpuCount();
-
-        if ($concurrency < 1) {
-            throw new \InvalidArgumentException('$concurrency must be at least 1.');
-        }
+        $concurrency = self::resolveConcurrency($concurrency);
 
         /** @var array<string, ?string> $results */
         $results = [];
@@ -104,9 +106,72 @@ final readonly class PsalmTest
             }
         }
 
-        foreach (\array_chunk($scriptsByFile, $concurrency, preserve_keys: true) as $batch) {
-            foreach (self::runSkipifBatch($batch) as $phptFile => $reason) {
-                $results[$phptFile] = $reason;
+        foreach (self::evaluateSkipifScripts($scriptsByFile, $concurrency) as $phptFile => $reason) {
+            // evaluateSkipifScripts() is shared with getSkipReasonsForTests() and typed
+            // array-key-generically for that; every key here really is one of $scriptsByFile's
+            // own string keys, seeded from $phptFiles above.
+            /** @var string $phptFile */
+            $results[$phptFile] = $reason;
+        }
+
+        return $results;
+    }
+
+    /**
+     * Evaluate the --SKIPIF-- script each PsalmTest already carries (populated by
+     * fromPhptFile() from its one parse of the file). Prefer this over getSkipReasons()
+     * when you already built PsalmTest instances for the same files — e.g. to also
+     * runBatch() them — since it never touches the filesystem again to get the decision.
+     *
+     * @param array<array-key, PsalmTest> $tests keyed by identifier
+     * @return array<array-key, ?string> skip reason per identifier, same keys as $tests
+     */
+    public static function getSkipReasonsForTests(array $tests, ?int $concurrency = null): array
+    {
+        $concurrency = self::resolveConcurrency($concurrency);
+
+        /** @var array<array-key, ?string> $results */
+        $results = [];
+        /** @var array<array-key, string> $scriptsById */
+        $scriptsById = [];
+
+        foreach ($tests as $id => $test) {
+            $results[$id] = null;
+
+            if ($test->skipifScript !== null) {
+                $scriptsById[$id] = $test->skipifScript;
+            }
+        }
+
+        foreach (self::evaluateSkipifScripts($scriptsById, $concurrency) as $id => $reason) {
+            $results[$id] = $reason;
+        }
+
+        return $results;
+    }
+
+    private static function resolveConcurrency(?int $concurrency): int
+    {
+        $concurrency ??= self::detectCpuCount();
+
+        if ($concurrency < 1) {
+            throw new \InvalidArgumentException('$concurrency must be at least 1.');
+        }
+
+        return $concurrency;
+    }
+
+    /**
+     * @param array<array-key, string> $scriptsById
+     * @return array<array-key, ?string>
+     */
+    private static function evaluateSkipifScripts(array $scriptsById, int $concurrency): array
+    {
+        $results = [];
+
+        foreach (\array_chunk($scriptsById, $concurrency, preserve_keys: true) as $batch) {
+            foreach (self::runSkipifBatch($batch) as $id => $reason) {
+                $results[$id] = $reason;
             }
         }
 
@@ -118,29 +183,29 @@ final readonly class PsalmTest
      * process in the batch is already running by the time we start reading, wall time is
      * bounded by the slowest script in the batch, not their sum.
      *
-     * @param array<string, string> $scriptsByFile
-     * @return array<string, ?string>
+     * @param array<array-key, string> $scriptsById
+     * @return array<array-key, ?string>
      */
-    private static function runSkipifBatch(array $scriptsByFile): array
+    private static function runSkipifBatch(array $scriptsById): array
     {
-        /** @var array<string, array{tempFile: string, process: resource, stdout: ?resource}> */
+        /** @var array<array-key, array{tempFile: string, process: resource, stdout: ?resource}> */
         $running = [];
 
         try {
-            foreach ($scriptsByFile as $phptFile => $script) {
-                $running[$phptFile] = self::startSkipifProcess($script, $phptFile);
+            foreach ($scriptsById as $id => $script) {
+                $running[$id] = self::startSkipifProcess($script, $id);
             }
 
             $results = [];
 
-            foreach (array_keys($running) as $phptFile) {
-                $stdout = $running[$phptFile]['stdout'];
+            foreach (array_keys($running) as $id) {
+                $stdout = $running[$id]['stdout'];
                 \assert($stdout !== null);
                 $output = \trim((string) \stream_get_contents($stdout));
                 \fclose($stdout);
-                \proc_close($running[$phptFile]['process']);
-                $running[$phptFile]['stdout'] = null; // mark closed so the finally below skips it
-                $results[$phptFile] = \stripos($output, 'skip') === 0 ? \ltrim(\substr($output, 4)) : null;
+                \proc_close($running[$id]['process']);
+                $running[$id]['stdout'] = null; // mark closed so the finally below skips it
+                $results[$id] = \stripos($output, 'skip') === 0 ? \ltrim(\substr($output, 4)) : null;
             }
 
             return $results;
@@ -161,12 +226,12 @@ final readonly class PsalmTest
     /**
      * @return array{tempFile: string, process: resource, stdout: resource}
      */
-    private static function startSkipifProcess(string $script, string $phptFile): array
+    private static function startSkipifProcess(string $script, int|string $id): array
     {
         $tempFile = \tempnam(\sys_get_temp_dir(), 'psalm_skipif_');
 
         if ($tempFile === false || \file_put_contents($tempFile, $script) === false) {
-            throw new \RuntimeException(\sprintf('Failed to write temporary SKIPIF file for %s.', $phptFile));
+            throw new \RuntimeException(\sprintf('Failed to write temporary SKIPIF file for %s.', $id));
         }
 
         // stderr inherits the parent's (like shell_exec did), not a pipe: a closed/unread pipe
@@ -179,7 +244,7 @@ final readonly class PsalmTest
         if (!\is_resource($process)) {
             @\unlink($tempFile);
 
-            throw new \RuntimeException(\sprintf('Failed to run SKIPIF script for %s.', $phptFile));
+            throw new \RuntimeException(\sprintf('Failed to run SKIPIF script for %s.', $id));
         }
 
         \fclose($pipes[0]);
@@ -239,31 +304,12 @@ final readonly class PsalmTest
     }
 
     /**
-     * Every caller (fromPhptFile(), getSkipReason(s)()) parses by file path, so memoizing here
-     * means a .phpt file is only ever read from disk once, no matter how many of those callers
-     * a consumer chains for the same file.
-     *
-     * @return PhptSections
-     * @psalm-external-mutation-free Only mutates its own function-static cache, never
-     *     anything visible from outside this function.
-     */
-    private static function parsePhpt(string $phptFile): array
-    {
-        // A function-static local, not a class property: the class is declared `readonly`,
-        // which (unlike per-property readonly) forbids mutable static class properties outright.
-        /** @var array<string, PhptSections> $cache */
-        static $cache = [];
-
-        return $cache[$phptFile] ??= self::doParsePhpt($phptFile);
-    }
-
-    /**
      * @return PhptSections
      * @psalm-pure This reads the filesystem via file(), so it is not truly pure; the
      *     annotation is required only because Psalm's impure-function list omits file()
      *     (unlike e.g. file_get_contents()), so Psalm would otherwise report MissingPureAnnotation.
      */
-    private static function doParsePhpt(string $phptFile): array
+    private static function parsePhpt(string $phptFile): array
     {
         $name = null;
         $sections = [];

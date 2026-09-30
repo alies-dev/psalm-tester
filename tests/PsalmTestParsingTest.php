@@ -154,26 +154,43 @@ final class PsalmTestParsingTest extends TestCase
                 PHPT));
     }
 
-    public function testFileIsParsedOnceAcrossGetSkipReasonAndFromPhptFile(): void
+    public function testFromPhptFileCapturesTheSkipifScriptFromTheSameParse(): void
+    {
+        $withSkipif = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+                --SKIPIF--
+                <?php echo 'skip not today';
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT));
+        $withoutSkipif = PsalmTest::fromPhptFile($this->writePhpt(<<<'PHPT'
+                --FILE--
+                <?php
+                --EXPECT--
+                PHPT));
+
+        self::assertSame("<?php echo 'skip not today';", $withSkipif->skipifScript);
+        self::assertNull($withoutSkipif->skipifScript);
+    }
+
+    public function testGetSkipReasonsForTestsEvaluatesTheCarriedScriptWithoutRereadingTheFile(): void
     {
         $file = $this->writePhpt(<<<'PHPT'
                 --SKIPIF--
-                <?php // never skips
+                <?php echo 'skip stale by now';
                 --FILE--
                 <?php
-                $x = 1;
                 --EXPECT--
                 PHPT);
-
-        // Prime the parse cache via getSkipReason() first.
-        self::assertNull(PsalmTest::getSkipReason($file));
-
-        // If fromPhptFile() re-read the file from disk instead of reusing the cached
-        // parse, this would throw (file() fails once the path no longer exists).
-        \unlink($file);
         $test = PsalmTest::fromPhptFile($file);
 
-        self::assertSame("<?php\n\$x = 1;", $test->code);
+        // If getSkipReasonsForTests() re-parsed the file instead of reusing $test->skipifScript
+        // (captured above, from fromPhptFile()'s one parse), this would have nothing to read.
+        \unlink($file);
+
+        $reasons = PsalmTest::getSkipReasonsForTests(['t' => $test]);
+
+        self::assertSame('stale by now', $reasons['t']);
     }
 
     private function writePhpt(string $contents): string

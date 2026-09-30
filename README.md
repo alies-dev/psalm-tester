@@ -150,6 +150,17 @@ foreach ($phptFiles as $phptFile) {
 
 Pass an explicit `concurrency` to bound how many scripts run in parallel: `getSkipReasons($phptFiles, concurrency: 4)`.
 
+If you already built `PsalmTest` instances via `fromPhptFile()` (e.g. to also `runBatch()` them), each one carries its
+own `--SKIPIF--` script in `$skipifScript` (`null` if the file has none) from that same parse. Pass those tests to
+`getSkipReasonsForTests()` instead of re-reading the files with `getSkipReasons()`:
+
+```php
+use AliesDev\PsalmTester\PsalmTest;
+
+$tests = []; // array<string, PsalmTest>, e.g. from PsalmTest::fromPhptFile() per discovered file
+$reasons = PsalmTest::getSkipReasonsForTests($tests); // array<string, ?string>, same keys as $tests
+```
+
 ## Batch execution
 
 By default, `test()` spawns a separate Psalm process per `.phpt` file.
