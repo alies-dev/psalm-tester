@@ -10,6 +10,7 @@ use PHPUnit\Framework\TestCase;
 final class PhptTestCaseTest extends TestCase
 {
     private const FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/FixturePhptCase.php';
+    private const ASSERTING_FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/AssertingFixturePhptCase.php';
     private const BROKEN_FIXTURE = __DIR__ . '/Fixtures/PhptTestCase/BrokenFixturePhptCase.php';
 
     private string $logDir = '';
@@ -76,6 +77,19 @@ final class PhptTestCaseTest extends TestCase
         self::assertSame(2, $exitCode, $output);
         self::assertStringContainsString('must have a FILE section', $output);
         self::assertMatchesRegularExpression(self::summary(tests: 2, assertions: 1, suffix: 'Errors: 1'), $output);
+    }
+
+    public function testEachFileIsAssertedAgainstItsOwnAnalysisOutput(): void
+    {
+        [$exitCode, $output] = $this->runFixture([], self::ASSERTING_FIXTURE);
+
+        self::assertSame(1, $exitCode, $output);
+        self::assertMatchesRegularExpression(self::summary(tests: 2, assertions: 2, suffix: 'Failures: 1'), $output);
+        // Data set names print as "testPhpt@name" (PHPUnit 13) or 'with data set "name"' (11, 12).
+        self::assertMatchesRegularExpression('/(@|data set ")mismatch\.phpt/', $output);
+        self::assertDoesNotMatchRegularExpression('/(@|data set ")match\.phpt/', $output);
+        self::assertStringContainsString("-'StubError on line 4: // expected'", $output);
+        self::assertStringContainsString("+'StubError on line 4: // actual'", $output);
     }
 
     public function testWithoutAnOwningTestSuiteEachTestAnalyzesOnlyItself(): void

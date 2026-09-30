@@ -139,8 +139,10 @@ abstract class PhptTestCase extends TestCase
      * PHPUnit exposes no public API for this, so this reads the class-level TestSuite that invokes
      * setUpBeforeClass() (TestSuite::invokeMethodsBeforeFirstTest() in PHPUnit 11.0 through 13.3):
      * iterating a TestSuite applies the injected --filter/--exclude-filter/--group/test-id filters,
-     * and its tests are not yet consumed at that point. Every step is guarded; if any of it stops
-     * holding, tests are still correct, just analyzed one Psalm run per test.
+     * and its tests are not yet consumed at that point. If no such suite is on the stack, tests are
+     * still correct, just analyzed one Psalm run per test. The internal methods called here
+     * (TestSuite::name(), TestCase::name(), TestCase::dataName()) are not guarded: a PHPUnit
+     * release that drops one fails loudly instead of silently analyzing the wrong files.
      *
      * @return list<string>|null
      * @psalm-suppress InternalMethod see above: no public API exposes the selection
