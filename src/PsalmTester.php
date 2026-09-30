@@ -135,6 +135,33 @@ final readonly class PsalmTester
      */
     public function run(iterable $phpts): array
     {
+        return $this->runPlanned($phpts, null);
+    }
+
+    /**
+     * @internal PsalmPhptTestCase's start line only: same as run(), but calls $onPlanned once
+     * SKIPIF evaluation and grouping are done and before any Psalm process starts, with the
+     * skipped count and the number of Psalm invocations about to run.
+     *
+     * @template TKey of array-key
+     * @param iterable<TKey, Phpt> $phpts keys must be unique
+     * @param callable(int, int): void $onPlanned
+     * @return array<TKey, Result> in the order of $phpts
+     */
+    public function runReportingPlan(iterable $phpts, callable $onPlanned): array
+    {
+        return $this->runPlanned($phpts, $onPlanned);
+    }
+
+    /**
+     * @template TKey of array-key
+     * @param iterable<TKey, Phpt> $phpts keys must be unique
+     * @param ?callable(int, int): void $onPlanned null for plain run(): the group count it would
+     *     otherwise need is skipped too, not just the call
+     * @return array<TKey, Result> in the order of $phpts
+     */
+    private function runPlanned(iterable $phpts, ?callable $onPlanned): array
+    {
         $unique = [];
         foreach ($phpts as $id => $phpt) {
             if (\array_key_exists($id, $unique)) {
@@ -160,6 +187,10 @@ final readonly class PsalmTester
             if (($skipReasons[$id] ?? null) === null) {
                 $toAnalyze[$id] = $phpt;
             }
+        }
+
+        if ($onPlanned !== null) {
+            $onPlanned(\count($phpts) - \count($toAnalyze), $this->countGroups($toAnalyze));
         }
 
         $analyzed = $toAnalyze === [] ? [] : $this->analyze($toAnalyze, $concurrency, $env, $temporaryDirectory);

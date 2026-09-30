@@ -121,10 +121,14 @@ final class FailureReport
      */
     private static function parseCheckType(string $message): ?array
     {
-        if (\preg_match('/^Checked variable \$(\w+) = (.+) does not match \$\1\??\s*=\s*(.+)$/', $message, $m) !== 1) {
+        if (\preg_match('/^Checked variable \$(\w+)(\??) = (.+) does not match \$\1(\??) = (.+)$/', $message, $m) !== 1) {
             return null;
         }
 
-        return ['var' => '$' . $m[1], 'expected' => $m[2], 'actual' => $m[3]];
+        return [
+            'var' => '$' . $m[1],
+            'expected' => $m[3] . ($m[2] === '?' ? ' (possibly undefined)' : ''),
+            'actual' => $m[5] . ($m[4] === '?' ? ' (possibly undefined)' : ''),
+        ];
     }
 }

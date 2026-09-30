@@ -45,7 +45,7 @@ final class FailureReportTest extends TestCase
         );
     }
 
-    public function testAPossiblyUndefinedCheckTypeVariableIsStillParsed(): void
+    public function testAPossiblyUndefinedActualTypeKeepsTheFlagVisible(): void
     {
         $report = FailureReport::build(
             Expectation::exact(''),
@@ -56,7 +56,23 @@ final class FailureReportTest extends TestCase
 
         self::assertSame(
             "Psalm reported what the expectation did not list, or missed what it did:\n"
-            . '  type        line 3  $x: expected int, actual int|null',
+            . '  type        line 3  $x: expected int, actual int|null (possibly undefined)',
+            $report,
+        );
+    }
+
+    public function testAPossiblyUndefinedExpectedTypeKeepsTheFlagVisible(): void
+    {
+        $report = FailureReport::build(
+            Expectation::exact(''),
+            [new Issue('CheckType', 3, 1, 'Checked variable $x? = int does not match $x = int|null')],
+            "<?php\n",
+            1,
+        );
+
+        self::assertSame(
+            "Psalm reported what the expectation did not list, or missed what it did:\n"
+            . '  type        line 3  $x: expected int (possibly undefined), actual int|null',
             $report,
         );
     }
