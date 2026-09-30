@@ -27,6 +27,26 @@ if ($mode === 'invalid_json') {
     exit(0);
 }
 
+if ($mode === 'spawn_grandchild') {
+    // Mimics Psalm's own PsalmRestarter: this process spawns an independent child (via
+    // proc_open, not pcntl_exec, so it does NOT replace this process) and then blocks,
+    // as if waiting on a re-exec'd child running the real analysis. Killing only this
+    // process leaves that child running, orphaned under init.
+    $pidFile = (string) \getenv('STUB_GRANDCHILD_PID_FILE');
+    $grandchildScript = 'file_put_contents(' . \var_export($pidFile, true) . ', (string) getmypid()); sleep(30);';
+    $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $pipes = [];
+    $grandchild = \proc_open([\PHP_BINARY, '-r', $grandchildScript], $descriptors, $pipes);
+    if (\is_resource($grandchild)) {
+        \fclose($pipes[0]);
+        \fclose($pipes[1]);
+        \fclose($pipes[2]);
+    }
+    \sleep(30);
+    \fwrite(\STDOUT, '[]');
+    exit(0);
+}
+
 if ($mode === 'env_record') {
     $logDir = (string) \getenv('STUB_ENV_LOG_DIR');
     if ($logDir !== '' && \is_dir($logDir)) {

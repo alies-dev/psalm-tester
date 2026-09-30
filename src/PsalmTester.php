@@ -341,10 +341,16 @@ final readonly class PsalmTester
                 continue;
             }
 
+            // Psalm re-execs itself into a child PHP process when its own restarter needs
+            // different ini/opcache/JIT settings (PsalmRestarter). That child is spawned via a
+            // plain fork+exec, not pcntl_exec(), so killing only the process proc_open() gave us
+            // leaves it running, orphaned under init and still burning CPU (and racing our cache
+            // dir cleanup). Discover descendants first, while the parent/ppid chain is still
+            // intact, then kill leaves before the root.
+            self::killDescendants(\proc_get_status($proc['process'])['pid']);
+
             // Signal 9 = SIGKILL, passed as a literal so this doesn't need ext-pcntl for the
-            // constant. Only the single tracked process is targeted: we never call setsid() for
-            // the child, so it shares our own process group and killing that group would take
-            // this process down with it. True process-tree isolation is left as a documented gap.
+            // constant.
             @\proc_terminate($proc['process'], 9);
 
             if ($proc['stdout'] !== null) {
@@ -365,6 +371,56 @@ final readonly class PsalmTester
                 $results[$id] = $message;
             }
         }
+    }
+
+    /**
+     * Best-effort: kills every process descended from $rootPid (not $rootPid itself), deepest
+     * generation first, so a still-alive parent never gets the chance to reparent a child we
+     * already accounted for. Shells out to `ps`/`kill` rather than posix_kill()/pcntl, since
+     * neither extension is required by this package.
+     */
+    private static function killDescendants(int $rootPid): void
+    {
+        foreach (array_reverse(self::collectDescendantGenerations($rootPid)) as $generation) {
+            foreach ($generation as $pid) {
+                /** @psalm-suppress ForbiddenCode */
+                @\shell_exec('kill -9 ' . $pid . ' 2>/dev/null');
+            }
+        }
+    }
+
+    /**
+     * @return list<list<int>> descendant pids grouped by generation, direct children first
+     */
+    private static function collectDescendantGenerations(int $rootPid): array
+    {
+        /** @psalm-suppress ForbiddenCode */
+        $output = (string) @\shell_exec('ps -A -o pid=,ppid= 2>/dev/null');
+
+        /** @var array<int, list<int>> */
+        $childrenByParent = [];
+        foreach (\explode("\n", \trim($output)) as $line) {
+            if (\preg_match('/^\s*(\d+)\s+(\d+)\s*$/', $line, $matches) !== 1) {
+                continue;
+            }
+            $childrenByParent[(int) $matches[2]][] = (int) $matches[1];
+        }
+
+        $generations = [];
+        $frontier = $childrenByParent[$rootPid] ?? [];
+
+        while ($frontier !== []) {
+            $generations[] = $frontier;
+            $next = [];
+            foreach ($frontier as $pid) {
+                foreach ($childrenByParent[$pid] ?? [] as $childPid) {
+                    $next[] = $childPid;
+                }
+            }
+            $frontier = $next;
+        }
+
+        return $generations;
     }
 
     /**
