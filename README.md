@@ -137,6 +137,7 @@ arguments or `--ARGS--` replaces the configured config:
 | `withEnv(array $env)` | none; extra variables for Psalm and SKIPIF processes (not `XDG_CACHE_HOME`, `TMPDIR`, `TMP`, `TEMP`, see below) |
 | `withProgress(bool $on)` | `false`; `true` prints one `<arguments>: <n> tests` line per Psalm run on STDERR, which PHPUnit's `--process-isolation` treats as an error |
 | `withTemporaryDirectory(string $dir)` | `<system temp dir>/psalm_test`; a relative path is resolved against the current directory |
+| `withUpdate(bool $on)` | the env var `PSALM_TESTER_UPDATE` (`1` or `true`, case-insensitive) |
 
 ## Using the tester directly
 
@@ -163,8 +164,8 @@ $result->assert(); // report it to PHPUnit: assertion with diff, skip, or failur
 `runOne(Phpt $phpt): Result` runs a single test the same way. `new Phpt(code: ..., expectation: Expectation::exact(...))`
 builds a test in code instead of from a file.
 
-`Outcome::XFailed`, `Outcome::XPassed`, `Outcome::Updated` and `Phpt::$xfail` are reserved for upcoming `--XFAIL--`
-and update mode support; `run()` does not produce them yet.
+`Outcome::XFailed`, `Outcome::XPassed` and `Phpt::$xfail` are reserved for upcoming `--XFAIL--` support; `run()` does
+not produce them yet.
 
 ## How tests run
 
@@ -188,6 +189,18 @@ roughly doubled the wall time of a 700 file suite.
 With `withTimeout($seconds)`, a Psalm run still going `$seconds` after it started (time spent waiting for a free slot
 does not count) is killed together with its child processes, and each of its tests gets `Outcome::Error` naming the
 arguments and the timeout. Other runs are unaffected.
+
+## Update mode
+
+With `withUpdate(true)` (or the env var `PSALM_TESTER_UPDATE=1`, e.g. `PSALM_TESTER_UPDATE=1 vendor/bin/phpunit`),
+`run()` rewrites a `Failed` test's `--EXPECT--` section in place with the actual output and reports it as
+`Outcome::Updated` (`assert()` passes); every other byte of the file (other sections, line endings, trailing newline)
+is left untouched.
+
+`--EXPECTF--`, `--EXPECT_EXTERNAL--` and `--EXPECTF_EXTERNAL--` tests are never rewritten (a format string or an
+external file has no single "actual output" to substitute), and neither are `--XFAIL--` tests (see below): these stay
+`Outcome::Failed` and are listed once on STDERR as `not updated: <path> (<reason>)`. Rewritten files are listed as
+`updated: <path>`.
 
 ## Upgrading from 0.3
 

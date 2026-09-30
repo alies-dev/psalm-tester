@@ -10,7 +10,7 @@ use Composer\InstalledVersions;
  * Runs .phpt tests through Psalm. Configure with the with*() methods, each returning a copy.
  *
  * @api
- * @psalm-type Options = array{psalm: ?string, config: string, arguments: list<string>, timeout: ?float, concurrency: ?positive-int, workingDirectory: ?string, env: array<string, string>, progress: bool, temporaryDirectory: ?string}
+ * @psalm-type Options = array{psalm: ?string, config: string, arguments: list<string>, timeout: ?float, concurrency: ?positive-int, workingDirectory: ?string, env: array<string, string>, progress: bool, temporaryDirectory: ?string, update: ?bool}
  * @psalm-type GroupEntries = array<array-key, array{file: string, phpt: Phpt}>
  * @psalm-type Group = array{argv: list<string>, entries: GroupEntries}
  */
@@ -41,6 +41,8 @@ final readonly class PsalmTester
             // Off by default: under --process-isolation PHPUnit treats any child stderr as an error.
             'progress' => false,
             'temporaryDirectory' => null,
+            // null: resolved from PSALM_TESTER_UPDATE at run() time, not here, so create() stays pure.
+            'update' => null,
         ]);
     }
 
@@ -141,6 +143,19 @@ final readonly class PsalmTester
     }
 
     /**
+     * When on, run() rewrites a Failed test's --EXPECT-- section in place with its actual output
+     * and reports it as Outcome::Updated instead; never for --EXPECTF--, *_EXTERNAL or --XFAIL--
+     * tests (reported on STDERR as "not updated: <path> (<reason>)" instead). Default: the env
+     * var PSALM_TESTER_UPDATE ("1" or "true", case-insensitive).
+     *
+     * @psalm-mutation-free
+     */
+    public function withUpdate(bool $on): self
+    {
+        return new self(['update' => $on] + $this->options);
+    }
+
+    /**
      * Runs the tests: evaluates SKIPIF scripts concurrently, then analyzes the rest with one Psalm
      * run per distinct argument set (concurrently, bounded by withConcurrency()). Returns exactly
      * one Result per input key; a Psalm run that times out or whose output cannot be attributed
@@ -187,7 +202,75 @@ final readonly class PsalmTester
             $results[$id] = $analyzed[$id] ?? Result::skipped($phpt, $skipReasons[$id] ?? '');
         }
 
+        if ($this->options['update'] ?? self::envUpdateDefault()) {
+            foreach ($results as $id => $result) {
+                if ($result->outcome === Outcome::Failed) {
+                    $results[$id] = self::applyUpdate($result);
+                }
+            }
+        }
+
         return $results;
+    }
+
+    /**
+     * @psalm-pure This reads an env var via getenv(), so it is not truly pure; the annotation is
+     *     required only because Psalm's impure-function list omits getenv() (like PhptParser's
+     *     file() call), so Psalm would otherwise report MissingPureAnnotation.
+     */
+    private static function envUpdateDefault(): bool
+    {
+        $value = \getenv('PSALM_TESTER_UPDATE');
+
+        return $value !== false && \in_array(\strtolower(\trim($value)), ['1', 'true'], true);
+    }
+
+    /**
+     * Rewrites $result's file with its actual output and returns the Outcome::Updated result, or
+     * reports why it could not be updated on STDERR and returns $result unchanged.
+     */
+    private static function applyUpdate(Result $result): Result
+    {
+        $phpt = $result->phpt;
+        $reason = self::updateIneligibleReason($phpt);
+
+        if ($reason !== null) {
+            \fwrite(\STDERR, \sprintf("not updated: %s (%s)\n", $phpt->path !== '' ? $phpt->path : '(in-code test)', $reason));
+
+            return $result;
+        }
+
+        PhptRewriter::rewriteExpect($phpt->path, $result->output);
+        \fwrite(\STDERR, \sprintf("updated: %s\n", $phpt->path));
+
+        return new Result($phpt, Outcome::Updated, $result->output, $result->issues);
+    }
+
+    /**
+     * @psalm-pure
+     */
+    /**
+     * @psalm-mutation-free
+     */
+    private static function updateIneligibleReason(Phpt $phpt): ?string
+    {
+        if ($phpt->xfail !== null) {
+            return 'has --XFAIL--';
+        }
+
+        if ($phpt->expectation->kind === ExpectationKind::Format) {
+            return $phpt->expectation->externalPath !== null ? 'EXPECTF_EXTERNAL cannot be rewritten' : 'EXPECTF cannot be rewritten';
+        }
+
+        if ($phpt->expectation->externalPath !== null) {
+            return 'EXPECT_EXTERNAL cannot be rewritten';
+        }
+
+        if ($phpt->path === '') {
+            return 'no source file to rewrite';
+        }
+
+        return null;
     }
 
     public function runOne(Phpt $phpt): Result
